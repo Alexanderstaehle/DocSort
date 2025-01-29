@@ -1,5 +1,17 @@
 # DocSort
+## Installation
 
+1. Create and activate the conda environment:
+```bash
+conda env create -f environment.yaml
+conda activate docsort
+```
+
+2. Start the application:
+```bash
+cd frontend
+flet run
+```
 DocSort is a Flet-based application that streamlines document digitalization and organization. Key features:
 
 - Automatic document scanning with corner detection
