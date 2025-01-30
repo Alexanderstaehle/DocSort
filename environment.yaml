@@ -10,3 +10,7 @@ dependencies:
   - flet
   - pip
   - scipy
+pip:
+  - torch
+  - torchvision
+  - "python-doctr[torch]"

@@ -1,6 +1,8 @@
 import flet as ft
 import numpy as np
+import cv2
 from pages.img_upload import ImageProcessor
+from pages.classification import ClassificationUI
 
 
 class DocumentScannerUI:
@@ -13,6 +15,7 @@ class DocumentScannerUI:
         self.original_image = None
         self.display_ratio = 1.0
         self.image_processor = ImageProcessor()
+        self.classification_ui = ClassificationUI(page)
 
         # Initialize UI components
         self.setup_ui()
@@ -52,6 +55,7 @@ class DocumentScannerUI:
             spacing=0,
             expand=True,
         )
+        self.result_view.controls.append(self.classification_ui.view)
 
     def create_corner_dot(self, x, y, idx):
         dot = ft.Container(
@@ -239,18 +243,32 @@ class DocumentScannerUI:
             ],
         )
 
+        # Next button to go to classification
+        next_button = ft.FilledButton(
+            "Next →",
+            on_click=lambda _: self.page.go("/classify"),
+        )
+
         # Update result view
         self.result_view.controls = [
             ft.Container(
-                content=ft.FilledButton(
-                    "← Back to Editor",
-                    on_click=self.go_back_to_editor,
+                content=ft.Row(
+                    [
+                        ft.FilledButton(
+                            "← Back to Editor",
+                            on_click=self.go_back_to_editor,
+                        ),
+                        next_button,
+                    ],
+                    alignment=ft.MainAxisAlignment.SPACE_BETWEEN,
                 ),
-                alignment=ft.alignment.center_left,
                 padding=10,
             ),
             tabs,
         ]
+
+        # Store the processed image path in page data for classification
+        self.page.client_storage.set("processed_image_path", result_data['Final Result'])
 
         self.editor_view.visible = False
         self.result_view.visible = True
