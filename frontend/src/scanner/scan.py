@@ -3,13 +3,6 @@ import numpy as np
 from scipy.spatial import distance as dist
 
 
-def preprocess_image(image):
-    gray = cv2.cvtColor(image, cv2.COLOR_BGR2GRAY)
-    blur = cv2.GaussianBlur(gray, (5, 5), 0)
-    edges = cv2.Canny(blur, 75, 200)
-    return edges
-
-
 def order_points(pts):
     # Sort points based on x-coordinates
     xSorted = pts[np.argsort(pts[:, 0]), :]
@@ -59,36 +52,36 @@ def four_point_transform(image, pts):
 def find_document_corners(image):
     """Returns the corners of the document in the image"""
     orig_h, orig_w = image.shape[:2]
-    
+
     # Resize image while maintaining aspect ratio
     target_height = 500.0
     ratio = target_height / orig_h
     resized = cv2.resize(image, (int(orig_w * ratio), int(target_height)))
-    
+
     # Convert to grayscale and blur
     gray = cv2.cvtColor(resized, cv2.COLOR_BGR2GRAY)
     blur = cv2.GaussianBlur(gray, (5, 5), 0)
-    
+
     # Edge detection and dilation
     edges = cv2.Canny(blur, 75, 200)
     kernel = cv2.getStructuringElement(cv2.MORPH_RECT, (9, 9))
     dilated = cv2.morphologyEx(edges, cv2.MORPH_CLOSE, kernel)
-    
+
     # Find contours
     contours, _ = cv2.findContours(dilated, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
     contours = sorted(contours, key=cv2.contourArea, reverse=True)[:5]
-    
+
     # Find the document contour
     for contour in contours:
         perimeter = cv2.arcLength(contour, True)
         approx = cv2.approxPolyDP(contour, 0.02 * perimeter, True)
-        
+
         if len(approx) == 4:
             # Scale corners back to original image size
             corners = approx.reshape(4, 2)
             corners = corners / ratio  # Scale back to original size
             return corners.astype(np.float32)
-    
+
     # If no document found, return corners of the full image
     return np.float32([[0, 0], [orig_w, 0], [orig_w, orig_h], [0, orig_h]])
 
