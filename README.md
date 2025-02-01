@@ -47,3 +47,7 @@ Perfect for managing personal or business documents while maintaining searchable
 ### 📅 Future Enhancements
 - Vector-based search functionality
 - Custom category management
+
+
+### Known Issues
+- File upload on web returns None for file path (seems to be an issue with Flet)

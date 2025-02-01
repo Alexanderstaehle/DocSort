@@ -16,6 +16,12 @@ class DocumentScannerUI:
         self.display_ratio = 1.0
         self.image_processor = ImageProcessor()
         self.classification_ui = ClassificationUI(page)
+        self.max_display_height = 0.7  # 70% of screen height
+        self.max_display_width = 0.9   # 90% of screen width
+        self.current_display_width = 0  # Add this line
+        self.current_display_height = 0  # Add this line
+        self.padding = 20  # Add padding for corner handles
+        self.base_container = None  # Add container reference
 
         # Initialize UI components
         self.setup_ui()
@@ -36,17 +42,29 @@ class DocumentScannerUI:
         )
 
         self.image_stack = ft.Container(
-            content=ft.Stack(controls=[]),
-            width=800,
-            height=600,
+            content=ft.Stack(
+                controls=[],
+                clip_behavior=ft.ClipBehavior.NONE
+            ),
             bgcolor=ft.Colors.BLACK12,
             border_radius=10,
+            alignment=ft.alignment.center,
+            clip_behavior=ft.ClipBehavior.NONE
         )
 
         self.editor_view = ft.Column(
-            controls=[ft.Row([self.upload_button, self.scan_button]), self.image_stack],
+            controls=[
+                ft.Row(
+                    [self.upload_button, self.scan_button],
+                    alignment=ft.MainAxisAlignment.CENTER,
+                ),
+                ft.Container(
+                    content=self.image_stack,
+                    alignment=ft.alignment.center,
+                )
+            ],
             spacing=20,
-            expand=True,
+            horizontal_alignment=ft.CrossAxisAlignment.CENTER,
         )
 
         self.result_view = ft.Column(
@@ -57,12 +75,78 @@ class DocumentScannerUI:
         )
         self.result_view.controls.append(self.classification_ui.view)
 
+    def calculate_display_dimensions(self, image_width, image_height):
+        """Calculate display dimensions based on screen size and image aspect ratio"""
+        # Get available screen dimensions (account for padding)
+        available_width = (self.page.window_width * self.max_display_width) - (2 * self.padding)
+        available_height = (self.page.window_height * self.max_display_height) - (2 * self.padding)
+        
+        # Calculate aspect ratio
+        aspect_ratio = image_width / image_height
+        
+        # Calculate display dimensions maintaining aspect ratio
+        if image_width > image_height:
+            # Landscape orientation
+            display_width = min(available_width, image_width)
+            display_height = display_width / aspect_ratio
+            if display_height > available_height:
+                display_height = available_height
+                display_width = display_height * aspect_ratio
+        else:
+            # Portrait orientation
+            display_height = min(available_height, image_height)
+            display_width = display_height * aspect_ratio
+            if display_width > available_width:
+                display_width = available_width
+                display_height = display_width / aspect_ratio
+        
+        return display_width, display_height
+
+    def constrain_corner(self, x, y):
+        """Constrain corner coordinates to valid image area including padding"""
+        x = max(self.padding, min(x, self.current_display_width + self.padding))
+        y = max(self.padding, min(y, self.current_display_height + self.padding))
+        return (x, y)
+
+    def check_corner_constraints(self, new_x, new_y, idx):
+        """Check if the new position maintains a valid rectangle"""
+        # Define the valid ranges for each corner
+        # corners order: [top-right, top-left, bottom-right, bottom-left]
+        if idx == 0:  # top-right
+            min_x = self.corners[1][0] + 10  # can't go past top-left
+            min_y = self.padding
+            max_y = self.corners[2][1] - 10  # can't go past bottom-right
+            new_x = max(min_x, min(new_x, self.current_display_width + self.padding))
+            new_y = max(min_y, min(new_y, max_y))
+        elif idx == 1:  # top-left
+            max_x = self.corners[0][0] - 10  # can't go past top-right
+            min_y = self.padding
+            max_y = self.corners[3][1] - 10  # can't go past bottom-left
+            new_x = max(self.padding, min(new_x, max_x))
+            new_y = max(min_y, min(new_y, max_y))
+        elif idx == 2:  # bottom-right
+            min_x = self.corners[3][0] + 10  # can't go past bottom-left
+            min_y = self.corners[0][1] + 10  # can't go past top-right
+            new_x = max(min_x, min(new_x, self.current_display_width + self.padding))
+            new_y = max(min_y, min(new_y, self.current_display_height + self.padding))
+        else:  # bottom-left (idx == 3)
+            max_x = self.corners[2][0] - 10  # can't go past bottom-right
+            min_y = self.corners[1][1] + 10  # can't go past top-left
+            new_x = max(self.padding, min(new_x, max_x))
+            new_y = max(min_y, min(new_y, self.current_display_height + self.padding))
+        
+        return new_x, new_y
+
     def create_corner_dot(self, x, y, idx):
+        """Create a corner dot with size relative to current display dimensions"""
+        # Calculate dot size based on current display dimensions
+        dot_size = min(max(self.current_display_width * 0.025 if self.current_display_width else 10, 10), 20)
+        
         dot = ft.Container(
-            width=20,
-            height=20,
+            width=dot_size,
+            height=dot_size,
             bgcolor=ft.Colors.YELLOW,
-            border_radius=10,
+            border_radius=dot_size/2,
         )
 
         return ft.GestureDetector(
@@ -70,8 +154,8 @@ class DocumentScannerUI:
             drag_interval=10,
             on_pan_update=lambda e: self.on_corner_drag(e, idx),
             content=dot,
-            left=x - 10,
-            top=y - 10,
+            left=x - dot_size/2,
+            top=y - dot_size/2,
         )
 
     def create_line_dragger(self, idx):
@@ -110,13 +194,20 @@ class DocumentScannerUI:
         return segments
 
     def on_corner_drag(self, e: ft.DragUpdateEvent, idx: int):
-        self.corners[idx] = (
-            max(0, self.corners[idx][0] + e.delta_x),
-            max(0, self.corners[idx][1] + e.delta_y),
-        )
-        self.corner_dots[idx].left = self.corners[idx][0] - 10
-        self.corner_dots[idx].top = self.corners[idx][1] - 10
+        new_x = self.corners[idx][0] + e.delta_x
+        new_y = self.corners[idx][1] + e.delta_y
+        
+        # Apply both rectangle and boundary constraints
+        new_x, new_y = self.check_corner_constraints(new_x, new_y, idx)
+        
+        self.corners[idx] = (new_x, new_y)
+        
+        # Calculate dot size for proper centering
+        dot_size = min(max(self.current_display_width * 0.025 if self.current_display_width else 10, 10), 20)
+        self.corner_dots[idx].left = new_x - dot_size/2
+        self.corner_dots[idx].top = new_y - dot_size/2
         self.corner_dots[idx].update()
+        
         self.update_line_draggers()
         self.draw_edges()
 
@@ -127,13 +218,19 @@ class DocumentScannerUI:
         corner1_idx = idx
         corner2_idx = (idx + 1) % 4
 
+        # Try moving both corners
         for i in [corner1_idx, corner2_idx]:
-            self.corners[i] = (
-                max(0, self.corners[i][0] + delta_x),
-                max(0, self.corners[i][1] + delta_y),
-            )
-            self.corner_dots[i].left = self.corners[i][0] - 10
-            self.corners[i].top = self.corners[i][1] - 10
+            new_x = self.corners[i][0] + delta_x
+            new_y = self.corners[i][1] + delta_y
+            
+            # Apply both rectangle and boundary constraints
+            new_x, new_y = self.check_corner_constraints(new_x, new_y, i)
+            self.corners[i] = (new_x, new_y)
+            
+            # Calculate dot size for proper centering
+            dot_size = min(max(self.current_display_width * 0.025 if self.current_display_width else 10, 10), 20)
+            self.corner_dots[i].left = new_x - dot_size/2
+            self.corner_dots[i].top = new_y - dot_size/2
             self.corner_dots[i].update()
 
         self.draw_edges()
@@ -148,11 +245,12 @@ class DocumentScannerUI:
             self.line_draggers[i].top = mid_y - 20
 
     def draw_edges(self):
+        """Update method to include base container in stack controls"""
         stack_controls = [
-            c
-            for c in self.image_stack.content.controls
-            if isinstance(c, ft.Image) or c in self.corner_dots
+            c for c in self.image_stack.content.controls
+            if isinstance(c, ft.Container) and c.content == self.base_container
         ]
+        stack_controls.extend(self.corner_dots)
 
         for i in range(len(self.corner_dots)):
             start = self.corners[i]
@@ -171,21 +269,55 @@ class DocumentScannerUI:
         if image_data is None:
             return
 
+        # Calculate display dimensions
+        self.current_display_width, self.current_display_height = self.calculate_display_dimensions(
+            image_data["display_width"],
+            image_data["display_height"]
+        )
+        
+        # Update display ratio
+        original_display_ratio = image_data["display_ratio"]
+        new_display_ratio = self.current_display_width / image_data["display_width"]
+        self.display_ratio = original_display_ratio * new_display_ratio
+
+        # Scale corners according to new display ratio
+        self.corners = [(x * new_display_ratio, y * new_display_ratio) 
+                       for x, y in image_data["corners"]]
         self.original_image = image_data["image"]
-        self.display_ratio = image_data["display_ratio"]
-        self.corners = image_data["corners"]
 
         # Reset UI components
         self.corner_dots = []
         self.line_draggers = []
         self.lines = []
 
-        # Update UI with new image
-        self.image_stack.content = ft.Stack(
-            width=image_data["display_width"],
-            height=image_data["display_height"],
-            controls=[image_data["display_image"]],
+        # Create the base container with padding
+        self.base_container = ft.Container(
+            width=self.current_display_width,
+            height=self.current_display_height,
+            content=ft.Image(
+                src=e.files[0].path,
+                width=self.current_display_width,
+                height=self.current_display_height,
+                fit=ft.ImageFit.CONTAIN,
+            ),
         )
+
+        # Update UI with new image with padding
+        self.image_stack.content = ft.Stack(
+            width=self.current_display_width + (2 * self.padding),
+            height=self.current_display_height + (2 * self.padding),
+            controls=[
+                ft.Container(
+                    content=self.base_container,
+                    margin=self.padding,
+                )
+            ],
+            clip_behavior=ft.ClipBehavior.NONE  # Allow interaction outside bounds
+        )
+
+        # Adjust corners for padding
+        self.corners = [(x + self.padding, y + self.padding) 
+                       for x, y in self.corners]
 
         # Create and add corner dots and draggers
         self.corner_dots = [
@@ -197,9 +329,9 @@ class DocumentScannerUI:
         self.image_stack.content.controls.extend(self.corner_dots)
         self.image_stack.content.controls.extend(self.line_draggers)
 
-        # Update container dimensions
-        self.image_stack.width = image_data["display_width"]
-        self.image_stack.height = image_data["display_height"]
+        # Explicitly set container dimensions
+        self.image_stack.width = self.current_display_width + (2 * self.padding)
+        self.image_stack.height = self.current_display_height + (2 * self.padding)
 
         self.update_line_draggers()
         self.draw_edges()
@@ -215,8 +347,12 @@ class DocumentScannerUI:
         if self.original_image is None or not self.corners:
             return
 
+        # Remove padding from corners before processing
+        adjusted_corners = [(x - self.padding, y - self.padding) 
+                          for x, y in self.corners]
+
         result_data = self.image_processor.process_document(
-            self.original_image, self.corners, self.display_ratio
+            self.original_image, adjusted_corners, self.display_ratio
         )
 
         if result_data is None:
