@@ -1,8 +1,11 @@
 import flet as ft
+import asyncio
 from pages.doc_scanner import DocumentScannerUI
 from pages.classification import ClassificationUI
+from ocr.ocr import OCRHandler
+from classification.zero_shot import DocumentClassifier
 
-def main(page: ft.Page):
+async def main(page: ft.Page):
     # Configure page
     page.title = "Document Scanner"
     page.padding = 20
@@ -10,18 +13,30 @@ def main(page: ft.Page):
     page.window_height = 800
     page.auto_scroll = True
 
+    # Start loading models in background
+    async def load_models():
+        # Initialize singleton instances
+        OCRHandler()
+        DocumentClassifier()
+
+    # Start model loading in background
+    asyncio.create_task(load_models())
+
     # Create pages
     scanner_ui = DocumentScannerUI(page)
     classification_ui = ClassificationUI(page)
     
     def route_change(e):
+        # Clear views first
+        page.views.clear()
         scanner_ui.editor_view.visible = False
         scanner_ui.result_view.visible = False
         classification_ui.view.visible = False
         
         if page.route == "/":
             scanner_ui.editor_view.visible = True
-            scanner_ui.result_view.visible = True
+            # Only show result view if there's a processed image
+            scanner_ui.result_view.visible = bool(page.client_storage.get("processed_image_path"))
             page.views.append(
                 ft.View(
                     "/",
@@ -51,5 +66,5 @@ def main(page: ft.Page):
     page.on_view_pop = view_pop
     page.go(page.route)
 
-if __name__ == "__main__": 
-    ft.app(target=main)
+if __name__ == "__main__":
+    ft.app(target=main, view=None)

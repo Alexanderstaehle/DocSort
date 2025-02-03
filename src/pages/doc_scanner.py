@@ -25,6 +25,7 @@ class DocumentScannerUI:
 
         # Initialize UI components
         self.setup_ui()
+        self.page.on_route_change = lambda e: self.handle_route_change(e.route)
 
     def setup_ui(self):
         self.file_picker = ft.FilePicker(on_result=self.on_upload_result)
@@ -110,28 +111,25 @@ class DocumentScannerUI:
 
     def check_corner_constraints(self, new_x, new_y, idx):
         """Check if the new position maintains a valid rectangle"""
-        # Define the valid ranges for each corner
-        # corners order: [top-right, top-left, bottom-right, bottom-left]
-        if idx == 0:  # top-right
-            min_x = self.corners[1][0] + 10  # can't go past top-left
-            min_y = self.padding
-            max_y = self.corners[2][1] - 10  # can't go past bottom-right
-            new_x = max(min_x, min(new_x, self.current_display_width + self.padding))
-            new_y = max(min_y, min(new_y, max_y))
-        elif idx == 1:  # top-left
-            max_x = self.corners[0][0] - 10  # can't go past top-right
-            min_y = self.padding
+        # corners order: [top-left, top-right, bottom-right, bottom-left]
+        if idx == 0:  # top-left
+            max_x = self.corners[1][0] - 10  # can't go past top-right
             max_y = self.corners[3][1] - 10  # can't go past bottom-left
             new_x = max(self.padding, min(new_x, max_x))
-            new_y = max(min_y, min(new_y, max_y))
+            new_y = max(self.padding, min(new_y, max_y))
+        elif idx == 1:  # top-right
+            min_x = self.corners[0][0] + 10  # can't go past top-left
+            max_y = self.corners[2][1] - 10  # can't go past bottom-right
+            new_x = max(min_x, min(new_x, self.current_display_width + self.padding))
+            new_y = max(self.padding, min(new_y, max_y))
         elif idx == 2:  # bottom-right
             min_x = self.corners[3][0] + 10  # can't go past bottom-left
-            min_y = self.corners[0][1] + 10  # can't go past top-right
+            min_y = self.corners[1][1] + 10  # can't go past top-right
             new_x = max(min_x, min(new_x, self.current_display_width + self.padding))
             new_y = max(min_y, min(new_y, self.current_display_height + self.padding))
         else:  # bottom-left (idx == 3)
             max_x = self.corners[2][0] - 10  # can't go past bottom-right
-            min_y = self.corners[1][1] + 10  # can't go past top-left
+            min_y = self.corners[0][1] + 10  # can't go past top-left
             new_x = max(self.padding, min(new_x, max_x))
             new_y = max(min_y, min(new_y, self.current_display_height + self.padding))
         
@@ -139,14 +137,29 @@ class DocumentScannerUI:
 
     def create_corner_dot(self, x, y, idx):
         """Create a corner dot with size relative to current display dimensions"""
-        # Calculate dot size based on current display dimensions
         dot_size = min(max(self.current_display_width * 0.025 if self.current_display_width else 10, 10), 20)
         
+        # Define colors for each corner for better visibility
+        corner_colors = {
+            0: ft.colors.RED,        # Top-left
+            1: ft.colors.GREEN,      # Top-right
+            2: ft.colors.BLUE,       # Bottom-right
+            3: ft.colors.YELLOW      # Bottom-left
+        }
+        
+        corner_labels = {
+            0: "TL",  # Top-left
+            1: "TR",  # Top-right
+            2: "BR",  # Bottom-right
+            3: "BL"   # Bottom-left
+        }
+
         dot = ft.Container(
             width=dot_size,
             height=dot_size,
-            bgcolor=ft.Colors.YELLOW,
+            bgcolor=corner_colors[idx],
             border_radius=dot_size/2,
+            tooltip=corner_labels[idx],  # Add tooltip for clarity
         )
 
         return ft.GestureDetector(
@@ -409,3 +422,35 @@ class DocumentScannerUI:
         self.editor_view.visible = False
         self.result_view.visible = True
         self.page.update()
+
+    def reset_ui(self):
+        """Reset UI to initial state"""
+        self.corners = []
+        self.corner_dots = []
+        self.line_draggers = []
+        self.lines = []
+        self.original_image = None
+        self.scan_button.visible = False
+        
+        # Reset image stack
+        self.image_stack.content = ft.Stack(
+            controls=[],
+            clip_behavior=ft.ClipBehavior.NONE
+        )
+        self.image_stack.width = None
+        self.image_stack.height = None
+        
+        # Clear result view
+        self.result_view.controls = []
+        self.result_view.controls.append(self.classification_ui.view)
+
+    def handle_route_change(self, route):
+        """Handle route changes"""
+        if route == "/" and (self.editor_view.visible or self.result_view.visible):
+            # Check if we should reset (when coming back from classification)
+            if not self.page.client_storage.get("processed_image_path"):
+                self.reset_ui()
+                # Make sure editor view is visible and result view is hidden
+                self.editor_view.visible = True
+                self.result_view.visible = False
+                self.page.update()

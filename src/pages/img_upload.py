@@ -28,19 +28,21 @@ class ImageProcessor:
             display_width = int(width * display_ratio)
             display_height = int(height * display_ratio)
 
-            # Scale corners to display size
-            corners = [(x * display_ratio, y * display_ratio) for x, y in detected_corners]
-
-            # If no corners detected, set default corners with 10% inset
-            if corners is None or len(corners) != 4:
+            # If corners detected, ensure they're in the correct order
+            if detected_corners is not None and len(detected_corners) == 4:
+                # Reorder corners to: [top-left, top-right, bottom-right, bottom-left]
+                corners = self.order_corners(detected_corners)
+                corners = [(x * display_ratio, y * display_ratio) for x, y in corners]
+            else:
                 print("No corners detected, using default corners")
-                inset_x = int(display_width * 0.1)  # 10% inset from sides
-                inset_y = int(display_height * 0.1)  # 10% inset from top/bottom
+                # Set default corners with 10% inset in correct order
+                inset_x = int(display_width * 0.1)
+                inset_y = int(display_height * 0.1)
                 corners = [
-                    (inset_x, inset_y),                           # Top-left
-                    (display_width - inset_x, inset_y),           # Top-right
-                    (display_width - inset_x, display_height - inset_y),  # Bottom-right
-                    (inset_x, display_height - inset_y)           # Bottom-left
+                    (inset_x, inset_y),                          # Top-left (0)
+                    (display_width - inset_x, inset_y),          # Top-right (1)
+                    (display_width - inset_x, display_height - inset_y),  # Bottom-right (2)
+                    (inset_x, display_height - inset_y)          # Bottom-left (3)
                 ]
 
             # Prepare display image
@@ -66,6 +68,22 @@ class ImageProcessor:
         except Exception as e:
             print(f"Error loading image: {str(e)}")
             return None
+
+    def order_corners(self, pts):
+        """Order points in: top-left, top-right, bottom-right, bottom-left order"""
+        pts = pts.astype(np.float32)
+        rect = np.zeros((4, 2), dtype=np.float32)
+
+        # Sum and diff of coordinates to find corners
+        s = pts.sum(axis=1)
+        d = np.diff(pts, axis=1)
+
+        rect[0] = pts[np.argmin(s)]  # Top-left: smallest sum
+        rect[2] = pts[np.argmax(s)]  # Bottom-right: largest sum
+        rect[1] = pts[np.argmin(d)]  # Top-right: smallest difference
+        rect[3] = pts[np.argmax(d)]  # Bottom-left: largest difference
+
+        return rect
 
     def process_document(self, original_image, corners, display_ratio):
         """Process document and return paths to processed images"""

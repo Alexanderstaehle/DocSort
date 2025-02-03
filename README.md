@@ -29,18 +29,18 @@ Perfect for managing personal or business documents while maintaining searchable
 ### ✅ Completed Features
 - Corner detection implementation
 - Image quality enhancement filters
+- OCR text extraction
+- Automated file categorization
+- Company detection
 
 ### 🚧 In Development
 1. **Document Scanning**
     - Camera integration
     - Multi-page document support
 
-2. **Text Processing**
-    - OCR implementation
-    - Automated text extraction
-
-3. **Smart Organization**
-    - Automated file categorization
+2. **Smart Organization**
+    - Suggest new category if "Other" selected
+    - Fix category translation
     - Intelligent folder structure
     - Google Drive integration
 
@@ -51,3 +51,4 @@ Perfect for managing personal or business documents while maintaining searchable
 
 ### Known Issues
 - File upload on web returns None for file path (seems to be an issue with Flet)
+- Snackbar not showing up

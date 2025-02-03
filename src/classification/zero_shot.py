@@ -2,27 +2,71 @@ import os
 import csv
 import pandas as pd
 from transformers import pipeline
+import torch
+from concurrent.futures import ThreadPoolExecutor
+import threading
 
 class DocumentClassifier:
+    _instance = None
+    _lock = threading.Lock()
+    _initialized = False
+    
+    def __new__(cls, preferred_language='de'):
+        if cls._instance is None:
+            with cls._lock:
+                if cls._instance is None:
+                    cls._instance = super(DocumentClassifier, cls).__new__(cls)
+        return cls._instance
+
     def __init__(self, preferred_language='de'):
-        self.classifier = pipeline("zero-shot-classification", 
-                                 model="MoritzLaurer/bge-m3-zeroshot-v2.0",
-                                 device=-1)
-        
-        # Initialize T5 model for both translation and language detection
-        self.t5_model = pipeline(
-            "text2text-generation",
-            model="t5-small",
-            tokenizer="t5-small",
-            device=-1
-        )
-        
-        self.preferred_language = preferred_language
-        self.default_categories = ["Other"]
-        self.category_mapping = self.load_category_mapping()
-        self.supported_languages = self.get_supported_languages()
-        self.categories = self.get_categories_in_language('en')  # Always use English for classification
-        self.debug = True  # Add debug flag
+        if not self._initialized:
+            self._initialized = True
+            self.classifier = None
+            self.t5_model = None
+            self.preferred_language = preferred_language
+            self.default_categories = ["Other"]
+            self.category_mapping = self.load_category_mapping()
+            self.supported_languages = self.get_supported_languages()
+            self.categories = self.get_categories_in_language('en')  # Always use English for classification
+            self.debug = True  # Add debug flag
+
+            # Start loading models in background
+            with ThreadPoolExecutor() as executor:
+                executor.submit(self._load_models)
+
+    def _load_models(self):
+        """Load NLP models from local storage"""
+        try:
+            base_path = os.path.dirname(os.path.dirname(os.path.dirname(__file__)))
+            models_path = os.path.join(base_path, 'storage', 'data', 'models')
+            
+            # Ensure models directory exists
+            os.makedirs(models_path, exist_ok=True)
+
+            # Load classifier
+            self.classifier = pipeline("zero-shot-classification", 
+                                    model="MoritzLaurer/ModernBERT-large-zeroshot-v2.0",
+                                    device=-1)
+            
+            # Load T5 model
+            self.t5_model = pipeline(
+                "text2text-generation",
+                model="google-t5/t5-small",
+                tokenizer="google-t5/t5-small",
+                device=-1
+            )
+
+            print("NLP models loaded successfully")
+
+        except Exception as e:
+            print(f"Error loading NLP models: {str(e)}")
+
+    def _ensure_models_loaded(self):
+        """Wait for models to be loaded"""
+        while self.classifier is None or self.t5_model is None:
+            print("Waiting for NLP models to load...")
+            import time
+            time.sleep(0.5)
 
     def load_category_mapping(self):
         """Load category mappings from CSV file into a pandas DataFrame"""
@@ -46,6 +90,7 @@ class DocumentClassifier:
 
     def detect_language(self, text):
         """Detect the language of the text using T5"""
+        self._ensure_models_loaded()
         try:
             # Truncate text for language detection
             sample_text = text[:100]  # Use first 100 chars for detection
@@ -74,6 +119,7 @@ class DocumentClassifier:
 
     def translate_to_english(self, text, source_lang):
         """Translate text to English using T5"""
+        self._ensure_models_loaded()
         try:
             if source_lang == 'en':
                 return text
@@ -120,6 +166,7 @@ class DocumentClassifier:
         """
         Classify text and return categories in preferred language
         """
+        self._ensure_models_loaded()
         if not text.strip():
             return {"labels": [], "scores": [], "language": None, "error": "Empty text"}
 
@@ -176,3 +223,74 @@ class DocumentClassifier:
             error_msg = str(e)
             print(f"Classification error: {error_msg}")
             return {"labels": [], "scores": [], "language": None, "error": error_msg}
+
+    def translate_category(self, text, source_lang, target_lang):
+        """Translate a category name between languages"""
+        self._ensure_models_loaded()
+        try:
+            # Language code to name mapping
+            lang_names = {
+                "en": "English",
+                "de": "German",
+                "fr": "French",
+                "es": "Spanish",
+                "it": "Italian",
+                "nl": "Dutch"
+            }
+            
+            source_name = lang_names.get(source_lang, "English")
+            target_name = lang_names.get(target_lang, "English")
+            
+            prompt = f"Translate this {source_name} word to {target_name}: {text}"
+            
+            result = self.t5_model(
+                prompt,
+                max_length=50,
+                num_beams=4,
+                do_sample=False,
+            )
+            
+            translated = result[0]['generated_text'].strip()
+            
+            # Remove any language prefix that might appear in the translation
+            for lang in lang_names.values():
+                translated = translated.replace(f"{lang}:", "").strip()
+            
+            return translated if translated else text
+            
+        except Exception as e:
+            print(f"Translation error: {str(e)}")
+            return text
+
+    def add_new_category(self, category):
+        """Add a new category to the category mapping with translations"""
+        try:
+            # Check if category already exists in any language
+            for lang_column in self.category_mapping.columns:
+                if category in self.category_mapping[lang_column].values:
+                    print(f"Category '{category}' already exists")
+                    return True
+
+            # Initialize new row with the category in all columns
+            new_row = {}
+            source_lang = self.preferred_language
+
+            # Translate category to each supported language
+            for target_lang in self.category_mapping.columns:
+                if target_lang == source_lang:
+                    new_row[target_lang] = category
+                else:
+                    translated = self.translate_category(category, source_lang, target_lang)
+                    new_row[target_lang] = translated
+                    if self.debug:
+                        print(f"Translated '{category}' to {target_lang}: {translated}")
+
+            # Add the new row to the mapping and save
+            self.category_mapping.loc[len(self.category_mapping)] = new_row
+            base_path = os.path.dirname(os.path.dirname(os.path.dirname(__file__)))
+            file_path = os.path.join(base_path, 'storage', 'data', 'category_mapping.csv')
+            self.category_mapping.to_csv(file_path, index=False)
+            return True
+        except Exception as e:
+            print(f"Error adding new category: {str(e)}")
+            return False
