@@ -11,9 +11,12 @@ dependencies:
   - pip
   - scipy
   - transformers
+  - sentencepiece
   - pydantic
   - click
+  - langdetect
 pip:
   - torch
   - torchvision
   - "python-doctr[torch]"
+  - pydrive2

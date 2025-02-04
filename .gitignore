@@ -1,5 +1,7 @@
 __pycache__
 example_images/
+client_secrets.json
+mycreds.txt
 
 # ----------- Flet's .gitignore file ------------
 
