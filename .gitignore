@@ -167,4 +167,8 @@ cython_debug/
 #.idea/
 
 # Flet
-storage/
+# Following ignores everything in storage except category_mapping.csv
+storage/*
+!storage/data
+storage/data/*
+!storage/data/category_mapping.csv
