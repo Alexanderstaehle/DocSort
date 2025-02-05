@@ -5,7 +5,17 @@ from transformers import pipeline
 
 class CompanyDetector:
     def __init__(self):
-        self.ner = pipeline("ner", model="dslim/bert-base-NER", device=-1)
+        # Set up local model directory
+        base_path = os.path.dirname(os.path.dirname(os.path.dirname(__file__)))
+        models_path = os.path.join(base_path, "storage", "data", "models")
+        
+        # Initialize NER pipeline with local model path
+        self.ner = pipeline(
+            "ner", 
+            model="dslim/bert-base-NER", 
+            device=-1,
+            model_kwargs={"cache_dir": models_path, "local_files_only": True}
+        )
         self.companies = self.load_companies()
         self.temp_companies = []  # Add temporary companies list
 

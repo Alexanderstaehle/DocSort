@@ -1,12 +1,13 @@
 import os
 import csv
 import pandas as pd
-from transformers import pipeline, T5Tokenizer, T5ForConditionalGeneration
-import torch
+from transformers import pipeline
 from concurrent.futures import ThreadPoolExecutor
 import threading
 from langdetect import detect
-
+import argostranslate.package
+import argostranslate.translate
+import shutil
 
 class DocumentClassifier:
     _instance = None
@@ -24,66 +25,91 @@ class DocumentClassifier:
         if not self._initialized:
             self._initialized = True
             self.classifier = None
-            self.t5_tokenizer = None
-            self.t5_model = None
             self.preferred_language = preferred_language
             self.default_categories = ["Other"]
             self.category_mapping = self.load_category_mapping()
             self.supported_languages = self.get_supported_languages()
-            self.categories = self.get_categories_in_language(
-                "en"
-            )  # Always use English for classification
+            self.categories = self.get_categories_in_language("en")
             self.debug = True
+            self.lang_to_model = {
+                'de': 'de-en',
+                'nl': 'nl-en',
+                'en': None
+            }
 
             # Start loading models in background
             with ThreadPoolExecutor() as executor:
                 executor.submit(self._load_models)
 
     def _load_models(self):
-        """Load NLP models from local storage"""
+        """Load NLP models"""
         try:
+            # Set up local model directories
             base_path = os.path.dirname(os.path.dirname(os.path.dirname(__file__)))
             models_path = os.path.join(base_path, "storage", "data", "models")
+            argos_path = os.path.join(models_path, "argos")
+            
+            # Ensure model directories exist
+            os.makedirs(argos_path, exist_ok=True)
 
-            # Ensure models directory exists
-            os.makedirs(models_path, exist_ok=True)
-
-            # Load classifier
+            # Load classifier with local model path
             self.classifier = pipeline(
                 "zero-shot-classification",
                 model="MoritzLaurer/ModernBERT-base-zeroshot-v2.0",
                 device=-1,
+                model_kwargs={"cache_dir": models_path, "local_files_only": True}
             )
 
-            # Load T5 model and tokenizer directly
-            self.t5_tokenizer = T5Tokenizer.from_pretrained(
-                "google-t5/t5-small", local_files_only=True, cache_dir=models_path
-            )
-            self.t5_model = T5ForConditionalGeneration.from_pretrained(
-                "google-t5/t5-small",
-                return_dict=True,
-                local_files_only=True,
-                cache_dir=models_path,
-            )
+            # Point argostranslate to our local package directory
+            argostranslate.package.INSTALLED_PACKAGES_PATH = argos_path
+            
+            # Check if we have packages installed by trying to get installed languages
+            installed_languages = argostranslate.translate.get_installed_languages()
+            
+            if not installed_languages:
+                print("No local packages found, downloading...")
+                # Download and install Argos Translate packages
+                argostranslate.package.update_package_index()
+                available_packages = argostranslate.package.get_available_packages()
+                
+                # Install required language pairs
+                for source_lang, lang_pair in self.lang_to_model.items():
+                    if lang_pair:
+                        try:
+                            # Find packages for both directions
+                            to_en_package = next(
+                                (pkg for pkg in available_packages 
+                                 if pkg.from_code == source_lang and pkg.to_code == 'en'),
+                                None
+                            )
+                            en_to_package = next(
+                                (pkg for pkg in available_packages 
+                                 if pkg.from_code == 'en' and pkg.to_code == source_lang),
+                                None
+                            )
+                            
+                            # Download and install packages
+                            if to_en_package:
+                                package_path = to_en_package.download()
+                                argostranslate.package.install_from_path(package_path)
+                            if en_to_package:
+                                package_path = en_to_package.download()
+                                argostranslate.package.install_from_path(package_path)
+                        except Exception as e:
+                            print(f"Error installing language pair for {source_lang}: {str(e)}")
+            else:
+                print("Using existing local packages")
 
-            # Move to CPU
-            self.t5_model = self.t5_model.to("cpu")
-
-            print("NLP models loaded successfully")
+            print("Models loaded successfully")
 
         except Exception as e:
-            print(f"Error loading NLP models: {str(e)}")
+            print(f"Error loading models: {str(e)}")
 
     def _ensure_models_loaded(self):
         """Wait for models to be loaded"""
-        while (
-            self.classifier is None
-            or self.t5_model is None
-            or self.t5_tokenizer is None
-        ):
-            print("Waiting for NLP models to load...")
+        while self.classifier is None:
+            print("Waiting for models to load...")
             import time
-
             time.sleep(0.5)
 
     def load_category_mapping(self):
@@ -133,7 +159,7 @@ class DocumentClassifier:
             print(f"Language detection error: {str(e)}")
             return "de"  # Default to German on error
 
-    def _split_into_chunks(self, text, max_tokens):
+    def _split_into_chunks(self, text, max_tokens, tokenizer):
         """Split text into chunks that fit within token limit"""
         chunks = []
         current_chunk = ""
@@ -148,7 +174,7 @@ class DocumentClassifier:
 
             # Try adding sentence to current chunk
             test_chunk = current_chunk + ". " + sentence if current_chunk else sentence
-            tokens = self.t5_tokenizer(test_chunk, return_tensors="pt")
+            tokens = tokenizer(test_chunk, return_tensors="pt")
 
             # If adding sentence would exceed limit, save current chunk and start new one
             if tokens.input_ids.shape[1] > max_tokens and current_chunk:
@@ -165,54 +191,52 @@ class DocumentClassifier:
         return chunks
 
     def translate_to_english(self, text, source_lang):
-        """Translate text to English using T5, processing in chunks if needed"""
-        self._ensure_models_loaded()
+        """Translate text to English using Argos Translate"""
         try:
-            if source_lang == "en":
+            if source_lang == 'en':
+                return text
+                
+            if source_lang not in self.lang_to_model:
+                print(f"No translation model available for {source_lang}")
                 return text
 
-            # Calculate maximum text length per chunk (accounting for prompt)
-            prompt_template = f"translate {source_lang} to English: "
-            prompt_tokens = self.t5_tokenizer(
-                prompt_template, return_tensors="pt"
-            ).input_ids.shape[1]
-            max_text_tokens = (
-                512 - prompt_tokens - 10
-            )  # Leave 10 tokens as safety margin
+            # Get installed languages
+            installed_languages = argostranslate.translate.get_installed_languages()
+            
+            # Find the right language objects
+            from_lang = next((lang for lang in installed_languages if lang.code == source_lang), None)
+            to_lang = next((lang for lang in installed_languages if lang.code == 'en'), None)
+            
+            if not from_lang or not to_lang:
+                print(f"Translation not available for {source_lang} to en")
+                return text
+            
+            # Get translation
+            translation = from_lang.get_translation(to_lang)
+            if not translation:
+                print(f"Could not create translation for {source_lang} to en")
+                return text
+            
+            if self.debug:
+                print(f"Translating from {source_lang} to English")
 
-            # Split text into chunks
-            chunks = self._split_into_chunks(text, max_text_tokens)
+            # Split text into smaller chunks to avoid memory issues
+            chunk_size = 5000  # characters
+            chunks = [text[i:i + chunk_size] for i in range(0, len(text), chunk_size)]
             translated_chunks = []
 
-            if self.debug:
-                print(f"Split text into {len(chunks)} chunks")
-
-            # Translate each chunk
             for i, chunk in enumerate(chunks):
-                prompt = f"translate {source_lang} to English: {chunk}"
+                if chunk.strip():  # Only translate non-empty chunks
+                    translated = translation.translate(chunk)
+                    translated_chunks.append(translated)
+                    if self.debug:
+                        print(f"Translated chunk {i+1}/{len(chunks)}")
 
-                if self.debug:
-                    print(f"\nTranslating chunk {i+1}/{len(chunks)}:")
-
-                input_ids = self.t5_tokenizer(
-                    prompt, return_tensors="pt", truncation=True, max_length=512
-                ).input_ids
-
-                outputs = self.t5_model.generate(
-                    input_ids, max_length=512, num_beams=4, do_sample=False
-                )
-
-                translated = self.t5_tokenizer.decode(
-                    outputs[0], skip_special_tokens=True
-                )
-                translated_chunks.append(translated)
-
-            # Combine translated chunks
             final_translation = " ".join(translated_chunks)
-
+            
             if self.debug:
-                print(f"\nFinal combined translation: {final_translation}...")
-                print(f"Total length: {len(final_translation)}")
+                print(f"Final translation length: {len(final_translation)}")
+                print(f"Final translation sample: {final_translation}...")
 
             return final_translation if final_translation else text
 
@@ -312,25 +336,36 @@ class DocumentClassifier:
             return {"labels": [], "scores": [], "language": None, "error": error_msg}
 
     def translate_category(self, text, source_lang, target_lang):
-        """Translate a category name between languages"""
-        self._ensure_models_loaded()
+        """Translate a category name between languages using Argos Translate"""
         try:
             if source_lang == target_lang:
                 return text
-
-            # Prepare translation prompt
-            prompt = f"translate {source_lang} to {target_lang}: {text}"
-
-            # Tokenize and generate
-            input_ids = self.t5_tokenizer(prompt, return_tensors="pt").input_ids
-            outputs = self.t5_model.generate(
-                input_ids, max_length=50, num_beams=4, do_sample=False
-            )
-
-            # Decode
-            translated = self.t5_tokenizer.decode(outputs[0], skip_special_tokens=True)
-            return translated if translated else text
-
+            
+            # Get installed languages
+            installed_languages = argostranslate.translate.get_installed_languages()
+            
+            # First translate to English if not already in English
+            if source_lang != 'en':
+                from_lang = next((lang for lang in installed_languages if lang.code == source_lang), None)
+                to_lang = next((lang for lang in installed_languages if lang.code == 'en'), None)
+                
+                if from_lang and to_lang:
+                    translation = from_lang.get_translation(to_lang)
+                    if translation:
+                        text = translation.translate(text)
+            
+            # Then translate from English to target language if needed
+            if target_lang != 'en':
+                from_lang = next((lang for lang in installed_languages if lang.code == 'en'), None)
+                to_lang = next((lang for lang in installed_languages if lang.code == target_lang), None)
+                
+                if from_lang and to_lang:
+                    translation = from_lang.get_translation(to_lang)
+                    if translation:
+                        text = translation.translate(text)
+            
+            return text
+            
         except Exception as e:
             print(f"Translation error: {str(e)}")
             return text

@@ -19,7 +19,12 @@ conda env create -f environment.yaml
 conda activate docsort
 ```
 
-2. Setup Google Drive API Project:
+2. Setup Offline Models:
+ ```bash
+python3 scripts/setup_models
+```
+
+3. Setup Google Drive API Project:
     - Visit the [Google Cloud Console](https://console.cloud.google.com/)
     - Create a new project or select an existing one
     - Enable the Google Drive API for your project
@@ -44,6 +49,9 @@ flet run
 - OCR text extraction
 - Automated file categorization
 - Company detection
+- Save to Drive in smart folder structure
+- Setup page
+- Offline Inference no extra API's (except Google Drive access)
 
 ### 🚧 In Development
 1. **Document Scanning**
@@ -51,11 +59,8 @@ flet run
     - Multi-page document support
 
 2. **Smart Organization**
-    - Run models offline
     - Suggest new category if "Other" selected
     - Fix category translation
-    - Intelligent folder structure
-    - Google Drive integration
 
 ### 📅 Future Enhancements
 - Vector-based search functionality
@@ -64,8 +69,5 @@ flet run
 
 ### Known Issues
 - File upload on web returns None for file path (seems to be an issue with Flet)
-- Classification has long inference time and low acc
-- Translation often fails since language is not properly detected (upgrade to large?)
 
-- Output language selection in AppBar
 - cleanup console outputs

@@ -32,7 +32,7 @@ class OCRHandler:
         """Load OCR models from local storage"""
         try:
             base_path = os.path.dirname(os.path.dirname(os.path.dirname(__file__)))
-            models_path = os.path.join(base_path, 'storage', 'data', 'models')
+            models_path = os.path.join(base_path, 'storage', 'data', 'models', 'ocr')
             
             # Ensure models directory exists
             os.makedirs(models_path, exist_ok=True)
