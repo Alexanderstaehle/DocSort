@@ -52,6 +52,7 @@ flet run
 - Save to Drive in smart folder structure
 - Setup page
 - Offline Inference no extra API's (except Google Drive access)
+- Vector-based search functionality
 
 ### 🚧 In Development
 1. **Document Scanning**
@@ -60,14 +61,14 @@ flet run
 
 2. **Smart Organization**
     - Suggest new category if "Other" selected
-    - Fix category translation
 
-### 📅 Future Enhancements
-- Vector-based search functionality
-- Custom category management
+3. **Multi-platform support**
+    - Build application on Android and iOS
 
 
 ### Known Issues
 - File upload on web returns None for file path (seems to be an issue with Flet)
+- Cleanup console outputs
 
-- cleanup console outputs
+
+- ProgressRing while resetting gdrive

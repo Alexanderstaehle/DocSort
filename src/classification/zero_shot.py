@@ -9,6 +9,7 @@ import argostranslate.package
 import argostranslate.translate
 import shutil
 
+
 class DocumentClassifier:
     _instance = None
     _lock = threading.Lock()
@@ -31,11 +32,7 @@ class DocumentClassifier:
             self.supported_languages = self.get_supported_languages()
             self.categories = self.get_categories_in_language("en")
             self.debug = True
-            self.lang_to_model = {
-                'de': 'de-en',
-                'nl': 'nl-en',
-                'en': None
-            }
+            self.lang_to_model = {"de": "de-en", "nl": "nl-en", "en": None}
 
             # Start loading models in background
             with ThreadPoolExecutor() as executor:
@@ -48,7 +45,7 @@ class DocumentClassifier:
             base_path = os.path.dirname(os.path.dirname(os.path.dirname(__file__)))
             models_path = os.path.join(base_path, "storage", "data", "models")
             argos_path = os.path.join(models_path, "argos")
-            
+
             # Ensure model directories exist
             os.makedirs(argos_path, exist_ok=True)
 
@@ -57,37 +54,45 @@ class DocumentClassifier:
                 "zero-shot-classification",
                 model="MoritzLaurer/ModernBERT-base-zeroshot-v2.0",
                 device=-1,
-                model_kwargs={"cache_dir": models_path, "local_files_only": True}
+                model_kwargs={"cache_dir": models_path, "local_files_only": True},
             )
 
             # Point argostranslate to our local package directory
             argostranslate.package.INSTALLED_PACKAGES_PATH = argos_path
-            
+
             # Check if we have packages installed by trying to get installed languages
             installed_languages = argostranslate.translate.get_installed_languages()
-            
+
             if not installed_languages:
                 print("No local packages found, downloading...")
                 # Download and install Argos Translate packages
                 argostranslate.package.update_package_index()
                 available_packages = argostranslate.package.get_available_packages()
-                
+
                 # Install required language pairs
                 for source_lang, lang_pair in self.lang_to_model.items():
                     if lang_pair:
                         try:
                             # Find packages for both directions
                             to_en_package = next(
-                                (pkg for pkg in available_packages 
-                                 if pkg.from_code == source_lang and pkg.to_code == 'en'),
-                                None
+                                (
+                                    pkg
+                                    for pkg in available_packages
+                                    if pkg.from_code == source_lang
+                                    and pkg.to_code == "en"
+                                ),
+                                None,
                             )
                             en_to_package = next(
-                                (pkg for pkg in available_packages 
-                                 if pkg.from_code == 'en' and pkg.to_code == source_lang),
-                                None
+                                (
+                                    pkg
+                                    for pkg in available_packages
+                                    if pkg.from_code == "en"
+                                    and pkg.to_code == source_lang
+                                ),
+                                None,
                             )
-                            
+
                             # Download and install packages
                             if to_en_package:
                                 package_path = to_en_package.download()
@@ -96,7 +101,9 @@ class DocumentClassifier:
                                 package_path = en_to_package.download()
                                 argostranslate.package.install_from_path(package_path)
                         except Exception as e:
-                            print(f"Error installing language pair for {source_lang}: {str(e)}")
+                            print(
+                                f"Error installing language pair for {source_lang}: {str(e)}"
+                            )
             else:
                 print("Using existing local packages")
 
@@ -110,6 +117,7 @@ class DocumentClassifier:
         while self.classifier is None:
             print("Waiting for models to load...")
             import time
+
             time.sleep(0.5)
 
     def load_category_mapping(self):
@@ -193,36 +201,40 @@ class DocumentClassifier:
     def translate_to_english(self, text, source_lang):
         """Translate text to English using Argos Translate"""
         try:
-            if source_lang == 'en':
+            if source_lang == "en":
                 return text
-                
+
             if source_lang not in self.lang_to_model:
                 print(f"No translation model available for {source_lang}")
                 return text
 
             # Get installed languages
             installed_languages = argostranslate.translate.get_installed_languages()
-            
+
             # Find the right language objects
-            from_lang = next((lang for lang in installed_languages if lang.code == source_lang), None)
-            to_lang = next((lang for lang in installed_languages if lang.code == 'en'), None)
-            
+            from_lang = next(
+                (lang for lang in installed_languages if lang.code == source_lang), None
+            )
+            to_lang = next(
+                (lang for lang in installed_languages if lang.code == "en"), None
+            )
+
             if not from_lang or not to_lang:
                 print(f"Translation not available for {source_lang} to en")
                 return text
-            
+
             # Get translation
             translation = from_lang.get_translation(to_lang)
             if not translation:
                 print(f"Could not create translation for {source_lang} to en")
                 return text
-            
+
             if self.debug:
                 print(f"Translating from {source_lang} to English")
 
             # Split text into smaller chunks to avoid memory issues
             chunk_size = 5000  # characters
-            chunks = [text[i:i + chunk_size] for i in range(0, len(text), chunk_size)]
+            chunks = [text[i : i + chunk_size] for i in range(0, len(text), chunk_size)]
             translated_chunks = []
 
             for i, chunk in enumerate(chunks):
@@ -233,7 +245,7 @@ class DocumentClassifier:
                         print(f"Translated chunk {i+1}/{len(chunks)}")
 
             final_translation = " ".join(translated_chunks)
-            
+
             if self.debug:
                 print(f"Final translation length: {len(final_translation)}")
                 print(f"Final translation sample: {final_translation}...")
@@ -340,38 +352,48 @@ class DocumentClassifier:
         try:
             if source_lang == target_lang:
                 return text
-            
+
             # Get installed languages
             installed_languages = argostranslate.translate.get_installed_languages()
-            
+
             # First translate to English if not already in English
-            if source_lang != 'en':
-                from_lang = next((lang for lang in installed_languages if lang.code == source_lang), None)
-                to_lang = next((lang for lang in installed_languages if lang.code == 'en'), None)
-                
+            if source_lang != "en":
+                from_lang = next(
+                    (lang for lang in installed_languages if lang.code == source_lang),
+                    None,
+                )
+                to_lang = next(
+                    (lang for lang in installed_languages if lang.code == "en"), None
+                )
+
                 if from_lang and to_lang:
                     translation = from_lang.get_translation(to_lang)
                     if translation:
                         text = translation.translate(text)
-            
+
             # Then translate from English to target language if needed
-            if target_lang != 'en':
-                from_lang = next((lang for lang in installed_languages if lang.code == 'en'), None)
-                to_lang = next((lang for lang in installed_languages if lang.code == target_lang), None)
-                
+            if target_lang != "en":
+                from_lang = next(
+                    (lang for lang in installed_languages if lang.code == "en"), None
+                )
+                to_lang = next(
+                    (lang for lang in installed_languages if lang.code == target_lang),
+                    None,
+                )
+
                 if from_lang and to_lang:
                     translation = from_lang.get_translation(to_lang)
                     if translation:
                         text = translation.translate(text)
-            
+
             return text
-            
+
         except Exception as e:
             print(f"Translation error: {str(e)}")
             return text
 
     def add_new_category(self, category):
-        """Add a new category to the category mapping with translations"""
+        """Add a new category to the user categories with translations"""
         try:
             # Check if category already exists in any language
             for lang_column in self.category_mapping.columns:
@@ -379,7 +401,7 @@ class DocumentClassifier:
                     print(f"Category '{category}' already exists")
                     return True
 
-            # Initialize new row with the category in all columns
+            # Create new row with translations
             new_row = {}
             source_lang = self.preferred_language
 
@@ -395,14 +417,27 @@ class DocumentClassifier:
                     if self.debug:
                         print(f"Translated '{category}' to {target_lang}: {translated}")
 
-            # Add the new row to the mapping and save
             self.category_mapping.loc[len(self.category_mapping)] = new_row
+
+            # Save only to user_categories.csv
             base_path = os.path.dirname(os.path.dirname(os.path.dirname(__file__)))
-            file_path = os.path.join(
-                base_path, "storage", "data", "category_mapping.csv"
+            user_file = os.path.join(
+                base_path, "storage", "data", "user_categories.csv"
             )
-            self.category_mapping.to_csv(file_path, index=False)
+
+            # If user_categories.csv doesn't exist yet, create it from current mapping
+            if not os.path.exists(user_file):
+                self.category_mapping.to_csv(user_file, index=False)
+            else:
+                # Load existing user categories
+                user_categories = pd.read_csv(user_file)
+                # Add new row
+                user_categories.loc[len(user_categories)] = new_row
+                # Save back to file
+                user_categories.to_csv(user_file, index=False)
+
             return True
+
         except Exception as e:
             print(f"Error adding new category: {str(e)}")
             return False

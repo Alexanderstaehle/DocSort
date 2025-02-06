@@ -18,10 +18,10 @@ class DocumentScannerUI:
         self.classification_ui = ClassificationUI(page)
         self.max_display_height = 0.7  # 70% of screen height
         self.max_display_width = 0.9  # 90% of screen width
-        self.current_display_width = 0  # Add this line
-        self.current_display_height = 0  # Add this line
-        self.padding = 20  # Add padding for corner handles
-        self.base_container = None  # Add container reference
+        self.current_display_width = 0
+        self.current_display_height = 0
+        self.padding = 20
+        self.base_container = None
 
         # Initialize UI components
         self.setup_ui()
@@ -170,7 +170,7 @@ class DocumentScannerUI:
             height=dot_size,
             bgcolor=corner_Colors[idx],
             border_radius=dot_size / 2,
-            tooltip=corner_labels[idx],  # Add tooltip for clarity
+            tooltip=corner_labels[idx],
         )
 
         return ft.GestureDetector(

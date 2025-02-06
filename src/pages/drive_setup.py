@@ -106,6 +106,33 @@ class DriveSetupUI:
             visible=False,
         )
 
+        self.reset_overlay = ft.Stack(
+            controls=[
+                ft.Container(
+                    bgcolor=ft.Colors.BLACK,
+                    opacity=0.7,
+                    expand=True,
+                ),
+                ft.Container(
+                    content=ft.Column(
+                        controls=[
+                            ft.ProgressRing(),
+                            ft.Text(
+                                "Resetting Drive structure...", color=ft.Colors.WHITE
+                            ),
+                        ],
+                        horizontal_alignment=ft.CrossAxisAlignment.CENTER,
+                        alignment=ft.MainAxisAlignment.CENTER,
+                        spacing=10,
+                    ),
+                    alignment=ft.alignment.center,
+                    expand=True,
+                ),
+            ],
+            expand=True,
+            visible=False,
+        )
+
         # Main view
         self.view = ft.Stack(
             [
@@ -115,6 +142,7 @@ class DriveSetupUI:
                     expand=True,
                 ),
                 self.loading_overlay,
+                self.reset_overlay,
             ],
             expand=True,
         )
@@ -172,9 +200,9 @@ class DriveSetupUI:
 
     def remove_manual_entry(self, e, row):
         """Remove a manual entry row"""
-        if row in self.manual_entries:  # Add safety check
+        if row in self.manual_entries:
             self.manual_entries.remove(row)
-        if row in self.manual_entries_column.controls:  # Add safety check
+        if row in self.manual_entries_column.controls:
             self.manual_entries_column.controls.remove(row)
         self.page.update()
 
@@ -194,24 +222,43 @@ class DriveSetupUI:
 
     def reset_drive(self, e):
         """Reset Drive folders and start setup"""
+        # Close dialog first
+        self.page.in_reset_dialog = False
         self.page.close(self.reset_dialog)
-        # Show loading overlay before starting operation
-        self.loading_overlay.visible = True
+
+        # Show reset overlay and force update
+        self.reset_overlay.visible = True
         self.page.update()
 
         try:
+            # Delay slightly to ensure overlay is shown
+            import time
+
+            time.sleep(0.1)
+
             # Use auth_handler to delete folder
             if self.page.auth_handler.delete_docsort_folder():
-                # Go to setup route to show the setup UI
-                self.loading_overlay.visible = False
+                self.reset_overlay.visible = False
                 self.page.go("/setup")
             else:
                 print("Failed to delete DocSort folder")
-                self.loading_overlay.visible = False
+                # Show error message
+                self.page.snack_bar = ft.SnackBar(
+                    content=ft.Text("Failed to delete DocSort folder"),
+                    bgcolor=ft.Colors.RED_700,
+                )
+                self.page.open(self.page.snack_bar)
+                self.reset_overlay.visible = False
                 self.page.update()
         except Exception as e:
             print(f"Error resetting drive: {e}")
-            self.loading_overlay.visible = False
+            # Show error message
+            self.page.snack_bar = ft.SnackBar(
+                content=ft.Text(f"Error resetting Drive: {str(e)}"),
+                bgcolor=ft.Colors.RED_700,
+            )
+            self.page.open(self.page.snack_bar)
+            self.reset_overlay.visible = False
             self.page.update()
 
     def save_user_categories(self, categories):

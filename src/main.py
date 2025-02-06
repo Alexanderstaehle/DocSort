@@ -7,12 +7,41 @@ from classification.zero_shot import DocumentClassifier
 from pages.google_drive_auth import GoogleDriveAuth
 from pages.upload_success import UploadSuccessUI
 from pages.drive_setup import DriveSetupUI
+from pages.search import SearchUI
 
 
 def create_app_bar(page: ft.Page, auth_handler: GoogleDriveAuth):
-    """Create app bar with Google Drive status"""
+    """Create header bar with Google Drive status and navigation rail"""
     status_color = ft.Colors.GREEN if page.drive_service else ft.Colors.RED
     email = auth_handler.get_user_email() if page.drive_service else "Not connected"
+
+    # Create navigation rail
+    def handle_nav_change(e):
+        if e.control.selected_index == 0:
+            page.go("/")
+        elif e.control.selected_index == 1:
+            page.go("/search")
+        page.update()
+
+    nav_rail = ft.NavigationRail(
+        selected_index=0 if page.route not in ["/search"] else 1,
+        label_type=ft.NavigationRailLabelType.ALL,
+        min_width=100,
+        min_extended_width=200,
+        destinations=[
+            ft.NavigationRailDestination(
+                icon=ft.Icons.DOCUMENT_SCANNER_OUTLINED,
+                selected_icon=ft.Icons.DOCUMENT_SCANNER,
+                label="Scanner",
+            ),
+            ft.NavigationRailDestination(
+                icon=ft.Icons.SEARCH_OUTLINED,
+                selected_icon=ft.Icons.SEARCH,
+                label="Search",
+            ),
+        ],
+        on_change=handle_nav_change,
+    )
 
     language_dropdown = ft.Container(
         content=ft.Dropdown(
@@ -43,15 +72,40 @@ def create_app_bar(page: ft.Page, auth_handler: GoogleDriveAuth):
         margin=ft.margin.only(right=10),
     )
 
-    return ft.AppBar(
-        leading=ft.Container(
-            content=ft.Text("DocSort", size=24, weight=ft.FontWeight.BOLD),
-            alignment=ft.alignment.center,
+    # Create header bar using Container
+    header = ft.Container(
+        content=ft.Row(
+            [
+                ft.Text("DocSort", size=24, weight=ft.FontWeight.BOLD),
+                ft.Row(
+                    [language_dropdown, status_icon, logout_button],
+                    alignment=ft.MainAxisAlignment.END,
+                ),
+            ],
+            alignment=ft.MainAxisAlignment.SPACE_BETWEEN,
         ),
-        leading_width=200,
-        center_title=True,
+        padding=10,
         bgcolor=ft.Colors.SURFACE,
-        actions=[language_dropdown, status_icon, logout_button],
+    )
+
+    # Create a container for the main content that will be updated
+    content_container = ft.Container(expand=True)
+    page.content_container = content_container  # Store reference for updates
+
+    return ft.Row(
+        [
+            nav_rail,
+            ft.VerticalDivider(width=1),
+            ft.Column(
+                [
+                    header,
+                    ft.Container(height=1, bgcolor=ft.Colors.OUTLINE_VARIANT),
+                    content_container,
+                ],
+                expand=True,
+            ),
+        ],
+        expand=True,
     )
 
 
@@ -111,6 +165,7 @@ async def main(page: ft.Page):
     scanner_ui = DocumentScannerUI(page)
     classification_ui = ClassificationUI(page)
     success_ui = UploadSuccessUI(page)
+    search_ui = SearchUI(page)
 
     # Check authentication and store drive service
     if auth_handler.check_auth():
@@ -137,70 +192,41 @@ async def main(page: ft.Page):
             page.go("/auth")
             return
 
+        # Update the content based on the route
         if page.route == "/auth":
-            if page.drive_service and auth_handler.check_docsort_folder():
-                if not getattr(page, "in_reset_dialog", False):
-                    setup_ui.show_reset_dialog()
-            page.views.append(
-                ft.View(
-                    "/auth",
-                    [app_bar, auth_handler.content],
-                )
-            )
+            page.content_container.content = auth_handler.content
         elif page.route == "/setup":
-            # Add setup route handling
-            page.views.append(
-                ft.View(
-                    "/setup",
-                    [app_bar, setup_ui.view],
-                )
-            )
+            page.content_container.content = setup_ui.view
         elif page.route == "/":
-            # Only check for setup when explicitly navigating to root after authentication
-            if (
-                page.drive_service
-                and not auth_handler.check_docsort_folder()
-                and getattr(page, "just_authenticated", False)
-            ):
-                page.just_authenticated = False
-                page.go("/setup")
-                return
-
-            # Always show scanner UI when navigating to root
             scanner_ui.editor_view.visible = True
             scanner_ui.result_view.visible = bool(
                 page.client_storage.get("processed_image_path")
             )
-            page.views.append(
-                ft.View(
-                    "/",
-                    [app_bar, scanner_ui.editor_view, scanner_ui.result_view],
-                )
+            page.content_container.content = ft.Column(
+                [scanner_ui.editor_view, scanner_ui.result_view],
+                expand=True,
             )
         elif page.route == "/classify":
             classification_ui.view.visible = True
-            page.views.append(
-                ft.View(
-                    "/classify",
-                    [app_bar, classification_ui.view],
-                )
-            )
+            page.content_container.content = classification_ui.view
         elif page.route == "/success":
             # Get success details from storage
             folder_path = page.client_storage.get("success_folder_path")
             filename = page.client_storage.get("success_filename")
-
             # Reset scanner UI to clear the image
             scanner_ui.reset_ui()
-
             # Show success page with details
             success_ui.show_success(folder_path, filename)
-            page.views.append(
-                ft.View(
-                    "/success",
-                    [app_bar, success_ui.view],  # Use success_ui.view directly
-                )
+            page.content_container.content = success_ui.view
+        elif page.route == "/search":
+            page.content_container.content = search_ui.view
+
+        page.views.append(
+            ft.View(
+                page.route,
+                [app_bar],
             )
+        )
 
         # Chain the route change events
         if hasattr(classification_ui, "handle_route_change"):

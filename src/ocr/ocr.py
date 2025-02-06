@@ -7,6 +7,7 @@ import cv2
 from concurrent.futures import ThreadPoolExecutor
 import threading
 
+
 class OCRHandler:
     _instance = None
     _lock = threading.Lock()
@@ -32,30 +33,40 @@ class OCRHandler:
         """Load OCR models from local storage"""
         try:
             base_path = os.path.dirname(os.path.dirname(os.path.dirname(__file__)))
-            models_path = os.path.join(base_path, 'storage', 'data', 'models', 'ocr')
-            
+            models_path = os.path.join(base_path, "storage", "data", "models", "ocr")
+
             # Ensure models directory exists
             os.makedirs(models_path, exist_ok=True)
 
-            det_model_path = os.path.join(models_path, 'db_mobilenet_v3_large.pt')
-            reco_model_path = os.path.join(models_path, 'crnn_mobilenet_v3_large.pt')
+            det_model_path = os.path.join(models_path, "db_mobilenet_v3_large.pt")
+            reco_model_path = os.path.join(models_path, "crnn_mobilenet_v3_large.pt")
 
             # Initialize models
-            det_model = db_mobilenet_v3_large(pretrained=False, pretrained_backbone=False)
-            reco_model = crnn_mobilenet_v3_large(pretrained=False, pretrained_backbone=False)
+            det_model = db_mobilenet_v3_large(
+                pretrained=False, pretrained_backbone=False
+            )
+            reco_model = crnn_mobilenet_v3_large(
+                pretrained=False, pretrained_backbone=False
+            )
 
             # Download and save models if they don't exist
-            if not os.path.exists(det_model_path) or not os.path.exists(reco_model_path):
+            if not os.path.exists(det_model_path) or not os.path.exists(
+                reco_model_path
+            ):
                 # Initialize a temporary predictor to get pretrained weights
                 temp_predictor = ocr_predictor(
                     det_arch="db_mobilenet_v3_large",
                     reco_arch="crnn_mobilenet_v3_large",
-                    pretrained=True
+                    pretrained=True,
                 )
-                
+
                 # Save models
-                torch.save(temp_predictor.det_predictor.model.state_dict(), det_model_path)
-                torch.save(temp_predictor.reco_predictor.model.state_dict(), reco_model_path)
+                torch.save(
+                    temp_predictor.det_predictor.model.state_dict(), det_model_path
+                )
+                torch.save(
+                    temp_predictor.reco_predictor.model.state_dict(), reco_model_path
+                )
                 del temp_predictor
 
             # Load models from local storage
@@ -75,7 +86,7 @@ class OCRHandler:
             self.model = ocr_predictor(
                 det_arch="db_mobilenet_v3_large",
                 reco_arch="crnn_mobilenet_v3_large",
-                pretrained=True
+                pretrained=True,
             )
 
     def process_image(self, image):
@@ -84,6 +95,7 @@ class OCRHandler:
         while self.model is None:
             print("Waiting for OCR model to load...")
             import time
+
             time.sleep(0.5)
 
         try:
@@ -112,30 +124,23 @@ class OCRHandler:
                         # DocTR uses relative coordinates in format [[xmin, ymin], [xmax, ymax]]
                         h, w = image.shape[:2]
                         ((xmin, ymin), (xmax, ymax)) = word.geometry
-                        
+
                         x = int(xmin * w)
                         y = int(ymin * h)
                         width = int((xmax - xmin) * w)
                         height = int((ymax - ymin) * h)
 
-                        words.append({
-                            "text": word.value,
-                            "confidence": confidence,
-                            "box": (x, y, width, height),
-                        })
+                        words.append(
+                            {
+                                "text": word.value,
+                                "confidence": confidence,
+                                "box": (x, y, width, height),
+                            }
+                        )
                         full_text.append(word.value)
 
-            return {
-                "full_text": " ".join(full_text),
-                "words": words,
-                "success": True
-            }
+            return {"full_text": " ".join(full_text), "words": words, "success": True}
 
         except Exception as e:
-            print(f"OCR Error: {str(e)}")  # Add debug print
-            return {
-                "full_text": "",
-                "words": [],
-                "success": False,
-                "error": str(e)
-            }
+            print(f"OCR Error: {str(e)}")
+            return {"full_text": "", "words": [], "success": False, "error": str(e)}

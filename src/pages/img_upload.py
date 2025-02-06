@@ -39,10 +39,13 @@ class ImageProcessor:
                 inset_x = int(display_width * 0.1)
                 inset_y = int(display_height * 0.1)
                 corners = [
-                    (inset_x, inset_y),                          # Top-left (0)
-                    (display_width - inset_x, inset_y),          # Top-right (1)
-                    (display_width - inset_x, display_height - inset_y),  # Bottom-right (2)
-                    (inset_x, display_height - inset_y)          # Bottom-left (3)
+                    (inset_x, inset_y),  # Top-left (0)
+                    (display_width - inset_x, inset_y),  # Top-right (1)
+                    (
+                        display_width - inset_x,
+                        display_height - inset_y,
+                    ),  # Bottom-right (2)
+                    (inset_x, display_height - inset_y),  # Bottom-left (3)
                 ]
 
             # Prepare display image
