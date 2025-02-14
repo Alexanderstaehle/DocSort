@@ -1,64 +1,31 @@
 import flet as ft
-from ocr.ocr import OCRHandler
-from classification.zero_shot import DocumentClassifier
-from classification.company_detection import CompanyDetector
-import cv2
 import threading
-import json
-import os
-import pandas as pd
-from services.search_service import SearchService
+from services.classification_service import ClassificationService
 
 
 class ClassificationUI:
     def __init__(self, page: ft.Page):
         self.page = page
-        self.ocr_handler = OCRHandler()
-        self.doc_classifier = DocumentClassifier(self.page.preferred_language)
-        self.company_detector = CompanyDetector()
-        self.search_service = SearchService()
+        self.classification_service = ClassificationService()
+        self._setup_state()
+        self.setup_ui()
+        self.page.on_route_change = self.handle_route_change
+
+    def _setup_state(self):
+        """Initialize state variables"""
         self.detected_company_name = None
         self.last_ocr_result = None
-
         self.page.snack_bar = ft.SnackBar(
             content=ft.Text(""),
             action="OK",
             bgcolor=ft.Colors.GREEN_700,
         )
 
-        self.setup_ui()
-        self.page.on_route_change = self.handle_route_change
-
     def handle_route_change(self, e):
         if e.route == "/classify" and self.view.visible:
             threading.Thread(target=self.start_processing, daemon=True).start()
 
     def setup_ui(self):
-        self.loading_overlay = ft.Stack(
-            controls=[
-                ft.Container(
-                    bgcolor=ft.Colors.BLACK,
-                    opacity=0.7,
-                    expand=True,
-                ),
-                ft.Container(
-                    content=ft.Column(
-                        controls=[
-                            ft.ProgressRing(),
-                            ft.Text("Detecting category...", color=ft.Colors.WHITE),
-                        ],
-                        horizontal_alignment=ft.CrossAxisAlignment.CENTER,
-                        alignment=ft.MainAxisAlignment.CENTER,
-                        spacing=10,
-                    ),
-                    alignment=ft.alignment.center,
-                    expand=True,
-                ),
-            ],
-            expand=True,
-            visible=False,
-        )
-
         self.category_dropdown = ft.Dropdown(
             label="Select category",
             width=300,
@@ -185,37 +152,8 @@ class ClassificationUI:
             expand=True,
         )
 
-        self.save_overlay = ft.Stack(
-            controls=[
-                ft.Container(
-                    bgcolor=ft.Colors.BLACK,
-                    opacity=0.7,
-                    expand=True,
-                ),
-                ft.Container(
-                    content=ft.Column(
-                        controls=[
-                            ft.ProgressRing(),
-                            ft.Text("Saving document...", color=ft.Colors.WHITE),
-                        ],
-                        horizontal_alignment=ft.CrossAxisAlignment.CENTER,
-                        alignment=ft.MainAxisAlignment.CENTER,
-                        spacing=10,
-                    ),
-                    alignment=ft.alignment.center,
-                    expand=True,
-                ),
-            ],
-            expand=True,
-            visible=False,
-        )
-
-        self.view = ft.Stack(
-            controls=[
-                self.content,
-                self.loading_overlay,
-                self.save_overlay,
-            ],
+        self.view = ft.Container(
+            content=self.content,
             expand=True,
             visible=False,
         )
@@ -227,18 +165,7 @@ class ClassificationUI:
 
     def add_new_category(self, e):
         if self.new_category_input.value:
-            base_path = os.path.dirname(os.path.dirname(os.path.dirname(__file__)))
-            user_file = os.path.join(
-                base_path, "storage", "data", "user_categories.csv"
-            )
-
-            if not os.path.exists(user_file):
-                df = pd.read_csv("storage/data/category_mapping.csv")
-                df.to_csv(user_file, index=False)
-                self.doc_classifier.category_mapping = df
-
-            if self.doc_classifier.add_new_category(self.new_category_input.value):
-                self.doc_classifier.category_mapping.to_csv(user_file, index=False)
+            if self.classification_service.add_category(self.new_category_input.value):
                 self.update_category_dropdown()
                 self.category_dropdown.value = self.new_category_input.value
                 self.new_category_input.value = ""
@@ -246,13 +173,9 @@ class ClassificationUI:
             self.page.update()
 
     def update_category_dropdown(self):
-        """Update category dropdown with user categories if available"""
-        # Force reload of category mapping to ensure we have latest user categories
-        self.doc_classifier.category_mapping = (
-            self.doc_classifier.load_category_mapping()
-        )
-        categories = self.doc_classifier.get_categories_in_language(
-            self.doc_classifier.preferred_language
+        """Update category dropdown with user categories"""
+        categories = self.classification_service.get_categories(
+            self.page.preferred_language
         )
         self.category_dropdown.options = [ft.dropdown.Option(cat) for cat in categories]
         self.page.update()
@@ -266,10 +189,19 @@ class ClassificationUI:
     def set_loading(self, is_loading: bool, is_save=False):
         """Toggle loading state and disable/enable controls"""
         if is_save:
-            self.save_overlay.visible = is_loading
+            (
+                self.page.overlay_service.show_saving("Saving document...")
+                if is_loading
+                else self.page.overlay_service.hide_all()
+            )
         else:
-            self.loading_overlay.visible = is_loading
+            (
+                self.page.overlay_service.show_loading("Processing document...")
+                if is_loading
+                else self.page.overlay_service.hide_all()
+            )
 
+        # Disable/enable controls
         self.category_dropdown.disabled = is_loading
         self.new_category_input.disabled = is_loading
         self.add_category_button.disabled = is_loading
@@ -288,7 +220,7 @@ class ClassificationUI:
 
     def add_new_company(self, e):
         if self.new_company_input.value:
-            if self.company_detector.add_company(self.new_company_input.value):
+            if self.classification_service.add_company(self.new_company_input.value):
                 self.update_company_dropdown()
                 self.company_dropdown.value = self.new_company_input.value
                 self.new_company_input.value = ""
@@ -304,88 +236,42 @@ class ClassificationUI:
 
     def save_changes(self, e):
         if not self.filename_input.value:
-            self.page.snack_bar.bgcolor = ft.Colors.RED_700
-            self.page.snack_bar.content.value = "Please enter a filename"
-            self.page.open(self.page.snack_bar)
-            self.page.update()
+            self._show_error("Please enter a filename")
             return
 
         self.set_loading(True, is_save=True)
-
         try:
-            # Get final company name - either from dropdown or detected field
-            company_name = None
-            if self.company_dropdown.value:
-                company_name = self.company_dropdown.value
-            elif (
+            # Get final company name and add to permanent list if it's from detected field
+            company_name = self._get_final_company_name()
+            if (
                 self.detected_company_field.visible
-                and self.detected_company_field.value
+                and self.detected_company_field.value == company_name
             ):
-                company_name = self.detected_company_field.value
-                self.company_detector.add_company(company_name)
+                self.classification_service.add_company(company_name)
 
-            # Get Drive service
-            drive_service = self.page.drive_service
-            if not drive_service:
-                self.page.snack_bar.bgcolor = ft.Colors.RED_700
-                self.page.snack_bar.content.value = "Google Drive not connected"
-                self.page.open(self.page.snack_bar)
-                self.page.update()
-                return
+            # Prepare document data
+            document_data = {
+                "category": self.category_dropdown.value,
+                "company": company_name,
+                "filename": f"{self.filename_input.value}.png",
+                "image_path": self.page.client_storage.get("processed_image_path"),
+                "ocr_text": self.last_ocr_result["full_text"],
+            }
 
-            category = self.category_dropdown.value
-            filename = f"{self.filename_input.value}.png"
+            # Save document
+            success, message = self.classification_service.save_document(
+                self.page.drive_service, document_data
+            )
 
-            folder_path = category
-            if company_name:
-                folder_path = f"{category}/{company_name}"
-
-            # Upload file to Drive first to get file ID
-            folder_id = self._ensure_folder_path(drive_service, folder_path)
-            image_path = self.page.client_storage.get("processed_image_path")
-
-            if image_path and self.last_ocr_result and self.last_ocr_result["success"]:
-                file = drive_service.CreateFile(
-                    {"title": filename, "parents": [{"id": folder_id}]}
+            if success:
+                self._handle_successful_save(
+                    document_data["category"], document_data["company"]
                 )
-                file.SetContentFile(image_path)
-                file.Upload()
+            else:
+                self._show_error(message)
 
-                # Add search indexing using file ID
-                search_data = self.search_service.prepare_document_data(
-                    text=self.last_ocr_result["full_text"],
-                    category=self.category_dropdown.value,
-                    company=company_name or "",
-                    file_id=file["id"],
-                    filename=filename,
-                )
-
-                # Load existing documents from Drive
-                documents = self.search_service.load_search_data(drive_service)
-                documents.append(search_data)
-
-                # Save back to Drive
-                self.search_service.save_search_data(drive_service, documents)
-
-                self.page.snack_bar.bgcolor = ft.Colors.GREEN_700
-                self.page.snack_bar.content.value = "Document saved to Google Drive!"
-                self.page.open(self.page.snack_bar)
-
-                self.page.client_storage.remove("processed_image_path")
-                self.page.client_storage.set("success_folder_path", folder_path)
-                self.page.client_storage.set("success_filename", filename)
-
-                self.page.go("/success")
-
-        except Exception as e:
-            self.page.snack_bar.bgcolor = ft.Colors.RED_700
-            self.page.snack_bar.content.value = f"Error saving to Drive: {str(e)}"
-            self.page.open(self.page.snack_bar)
         finally:
             self.set_loading(False, is_save=True)
-            self.company_detector.clear_temp_companies()
-
-        self.page.update()
 
     def _ensure_folder_path(self, drive, folder_path):
         """Create folder hierarchy and return final folder ID"""
@@ -439,61 +325,82 @@ class ClassificationUI:
         file.Upload()
 
     def start_processing(self):
-        """Process the document with OCR and classification"""
+        """Process the document"""
         self.set_loading(True)
-
         try:
             image_path = self.page.client_storage.get("processed_image_path")
             if image_path:
-                image = cv2.imread(image_path)
-                if image is not None:
-                    result = self.ocr_handler.process_image(image)
-                    self.last_ocr_result = result
-
-                    if result["success"]:
-                        print("Document Text:")
-                        print(result["full_text"])
-
-                        detected_companies = self.company_detector.detect_companies(
-                            result["full_text"]
-                        )
-                        existing_companies = (
-                            self.company_detector.get_permanent_companies()
-                        )
-
-                        if detected_companies:
-                            first_detected = detected_companies[0]
-                            if first_detected not in existing_companies:
-                                self.detected_company_name = first_detected
-                                self.detected_company_field.value = first_detected
-                                self.detected_company_message.visible = True
-                                self.detected_company_field.visible = True
-                            else:
-                                self.company_dropdown.value = first_detected
-                                self.detected_company_message.visible = False
-                                self.detected_company_field.visible = False
-
-                        self.company_dropdown.options = [
-                            ft.dropdown.Option(company)
-                            for company in existing_companies
-                        ]
-
-                        doc_type = self.doc_classifier.classify_text(
-                            result["full_text"]
-                        )
-
-                        if not doc_type["error"] and doc_type["labels"]:
-                            self.update_category_dropdown()
-                            self.category_dropdown.value = doc_type["labels"][0]
-                        else:
-                            self.category_message.value = f"Error: {doc_type['error']}"
-                    else:
-                        self.category_message.value = (
-                            f"Error: {result.get('error', 'Unknown error')}"
-                        )
+                result = self.classification_service.process_document(image_path)
+                if result["success"]:
+                    self.last_ocr_result = result["ocr_result"]
+                    self._handle_processing_result(result)
                 else:
-                    self.category_message.value = "Could not load image"
-        except Exception as e:
-            self.category_message.value = f"An error occurred: {str(e)}"
+                    self.category_message.value = f"Error: {result['error']}"
         finally:
             self.set_loading(False)
+
+    def _handle_processing_result(self, result):
+        """Handle successful processing result"""
+        # Update company information
+        if result["detected_companies"]:
+            first_detected = result["detected_companies"][0]
+            if first_detected not in result["existing_companies"]:
+                self._show_detected_company(first_detected)
+            else:
+                self._select_existing_company(first_detected)
+
+        self._update_company_dropdown(result["existing_companies"])
+
+        # Update category information
+        if result["classification"]["labels"]:
+            self.update_category_dropdown()
+            self.category_dropdown.value = result["classification"]["labels"][0]
+
+    def _show_detected_company(self, company_name: str):
+        """Show detected company in UI"""
+        self.detected_company_name = company_name
+        self.detected_company_field.value = company_name
+        self.detected_company_message.visible = True
+        self.detected_company_field.visible = True
+
+    def _select_existing_company(self, company_name: str):
+        """Select existing company in dropdown"""
+        self.company_dropdown.value = company_name
+        self.detected_company_message.visible = False
+        self.detected_company_field.visible = False
+
+    def _update_company_dropdown(self, companies: list):
+        """Update company dropdown with options"""
+        self.company_dropdown.options = [
+            ft.dropdown.Option(company) for company in companies
+        ]
+
+    def _get_final_company_name(self) -> str:
+        """Get final company name from either dropdown or detected field"""
+        if self.company_dropdown.value:
+            return self.company_dropdown.value
+        elif self.detected_company_field.visible and self.detected_company_field.value:
+            return self.detected_company_field.value
+        return ""
+
+    def _show_error(self, message: str):
+        """Show error message in snackbar"""
+        self.page.snack_bar.bgcolor = ft.Colors.RED_700
+        self.page.snack_bar.content.value = message
+        self.page.open(self.page.snack_bar)
+        self.page.update()
+
+    def _handle_successful_save(self, folder_path: str, company: str):
+        """Handle successful document save"""
+        self.page.snack_bar.bgcolor = ft.Colors.GREEN_700
+        self.page.snack_bar.content.value = "Document saved to Google Drive!"
+        self.page.open(self.page.snack_bar)
+
+        # Clear temporary data
+        self.page.client_storage.remove("processed_image_path")
+        folder_path = f"{folder_path}/{company}" if company else folder_path
+        self.page.client_storage.set("success_folder_path", folder_path)
+        self.page.client_storage.set("success_filename", self.filename_input.value)
+
+        # Navigate to success page
+        self.page.go("/success")

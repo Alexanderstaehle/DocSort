@@ -107,7 +107,7 @@ class DocumentClassifier:
             else:
                 print("Using existing local packages")
 
-            print("Models loaded successfully")
+            print("Classification models loaded successfully")
 
         except Exception as e:
             print(f"Error loading models: {str(e)}")

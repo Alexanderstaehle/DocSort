@@ -1,8 +1,10 @@
 import os
 import flet as ft
-import json
 import shutil
 from services.search_service import SearchService
+import pypdfium2 as pdfium
+from pathlib import Path
+import tempfile
 
 
 class SearchUI:
@@ -19,32 +21,6 @@ class SearchUI:
         self.temp_file = None
 
     def setup_ui(self):
-        # Create loading overlay first
-        self.loading_overlay = ft.Stack(
-            controls=[
-                ft.Container(
-                    bgcolor=ft.Colors.BLACK,
-                    opacity=0.7,
-                    expand=True,
-                ),
-                ft.Container(
-                    content=ft.Column(
-                        controls=[
-                            ft.ProgressRing(),
-                            ft.Text("Searching documents...", color=ft.Colors.WHITE),
-                        ],
-                        horizontal_alignment=ft.CrossAxisAlignment.CENTER,
-                        alignment=ft.MainAxisAlignment.CENTER,
-                        spacing=10,
-                    ),
-                    alignment=ft.alignment.center,
-                    expand=True,
-                ),
-            ],
-            expand=True,
-            visible=False,
-        )
-
         self.search_field = ft.TextField(
             label="Search documents",
             hint_text="Enter your search query...",
@@ -63,29 +39,26 @@ class SearchUI:
             padding=20,
         )
 
-        # Update main view to include overlay
-        self.view = ft.Stack(
+        self.view = ft.Column(
             controls=[
-                ft.Column(
-                    controls=[
-                        ft.Text("Search Documents", size=32, weight=ft.FontWeight.BOLD),
-                        ft.Row(
-                            [self.search_field, self.search_button],
-                            alignment=ft.MainAxisAlignment.CENTER,
-                        ),
-                        self.results_list,
-                    ],
-                    spacing=20,
-                    expand=True,
+                ft.Text("Search Documents", size=32, weight=ft.FontWeight.BOLD),
+                ft.Row(
+                    [self.search_field, self.search_button],
+                    alignment=ft.MainAxisAlignment.CENTER,
                 ),
-                self.loading_overlay,
+                self.results_list,
             ],
+            spacing=20,
             expand=True,
         )
 
     def set_loading(self, is_loading: bool):
         """Toggle loading state and disable controls"""
-        self.loading_overlay.visible = is_loading
+        if is_loading:
+            self.page.overlay_service.show_loading("Searching documents...")
+        else:
+            self.page.overlay_service.hide_all()
+
         self.search_field.disabled = is_loading
         self.search_button.disabled = is_loading
         self.page.update()
@@ -184,7 +157,10 @@ class SearchUI:
 
         except Exception as ex:
             # Show error message
-            snack_bar = ft.SnackBar(content=ft.Text(f"Error searching: {str(ex)}"))
+            snack_bar = ft.SnackBar(
+                content=ft.Text(f"Error searching: {str(ex)}"),
+                bgcolor=ft.Colors.RED_700,
+            )
             self.page.open(snack_bar)
         finally:
             # Hide loading overlay
@@ -194,67 +170,94 @@ class SearchUI:
 
     def save_file_result(self, e: ft.FilePickerResultEvent):
         """Handle file save result"""
-        if not e.path or not self.current_image_path:
+        # Use download_source instead of current_image_path if available
+        source_path = getattr(self, "download_source", self.current_image_path)
+        if not e.path or not source_path:
             return
-
         try:
-            # Ensure the path has the correct extension
             save_path = e.path
-            if not save_path.lower().endswith(".png"):
-                save_path += ".png"
-
-            # Copy the image to the selected location
-            shutil.copy2(self.current_image_path, save_path)
-            # Show success message
-            snack_bar = ft.SnackBar(content=ft.Text("File saved successfully!"))
+            # Append proper extension if missing
+            if not any(save_path.lower().endswith(ext) for ext in [".pdf", ".png"]):
+                allowed_ext = ".pdf" if source_path.endswith(".pdf") else ".png"
+                save_path += allowed_ext
+            shutil.copy2(source_path, save_path)
+            snack_bar = ft.SnackBar(
+                content=ft.Text("File saved successfully!"),
+                bgcolor=ft.Colors.GREEN_700,
+            )
             self.page.open(snack_bar)
         except Exception as ex:
-            # Show error message
-            snack_bar = ft.SnackBar(content=ft.Text(f"Error saving file: {str(ex)}"))
+            snack_bar = ft.SnackBar(
+                content=ft.Text(f"Error saving file: {str(ex)}"),
+                bgcolor=ft.Colors.RED_700,
+            )
             self.page.open(snack_bar)
         finally:
             self.page.update()
 
+    def _create_temp_file(self, suffix: str) -> str:
+        """Create and return a temporary file path."""
+        temp = tempfile.NamedTemporaryFile(delete=False, suffix=suffix)
+        temp.close()
+        return temp.name
+
+    def _process_pdf(self, file) -> tuple[str, str]:
+        """
+        Download PDF, render first page to PNG, and return tuple:
+        (path to PNG for display, path to original PDF for download)
+        """
+        pdf_path = self._create_temp_file(".pdf")
+        file.GetContentFile(pdf_path)
+        pdf_doc = pdfium.PdfDocument(pdf_path)
+        page0 = pdf_doc.get_page(0)
+        bitmap = page0.render(scale=2)
+        pil_image = bitmap.to_pil()
+        page0.close()
+        pdf_doc.close()
+        png_path = self._create_temp_file(".png")
+        pil_image.save(png_path, format="PNG")
+        return png_path, pdf_path  # display, download_source
+
+    def _process_image(self, file, ext: str) -> tuple[str, str]:
+        """
+        Download image file and return tuple:
+        (path to image for display, same path for download)
+        """
+        image_path = self._create_temp_file(ext)
+        file.GetContentFile(image_path)
+        return image_path, image_path
+
     def view_document(self, file_id):
         """View document using Drive file ID"""
+        # Show loading overlay before starting
+        self.page.overlay_service.show_loading("Loading document preview...")
+
         try:
-            # Get file from Drive
             file = self.page.drive_service.CreateFile({"id": file_id})
+            title = file["title"]
+            ext = Path(title).suffix.lower()
+            if ext == ".pdf":
+                display_path, download_source = self._process_pdf(file)
+            else:
+                display_path, download_source = self._process_image(file, ext)
+            self.current_image_path = display_path
+            self.download_source = download_source
 
-            # Create temporary file
-            import tempfile
-            import os
-
-            if self.temp_file:
-                try:
-                    os.remove(self.temp_file)
-                except:
-                    pass
-
-            temp = tempfile.NamedTemporaryFile(delete=False, suffix=".png")
-            temp.close()
-            self.temp_file = temp.name
-
-            # Download file
-            file.GetContentFile(self.temp_file)
-
-            # Show dialog with image
-            self.current_image_path = self.temp_file
-
-            # Get filename from Drive search data
+            # Retrieve filename from search data
             documents = self.search_service.load_search_data(self.page.drive_service)
             doc_data = next(
                 (doc for doc in documents if doc["file_id"] == file_id), None
             )
-            filename = doc_data.get("filename") if doc_data else file["title"]
+            filename = doc_data.get("filename") if doc_data else title
 
             def close_dialog(e):
                 self.page.close(dialog)
                 self.page.update()
 
             def download_file(e):
+                allowed = ["pdf"] if ext == ".pdf" else ["png"]
                 self.save_file_picker.save_file(
-                    file_name=filename, allowed_extensions=["png"]
+                    file_name=filename, allowed_extensions=allowed
                 )
 
             dialog = ft.AlertDialog(
@@ -262,10 +265,7 @@ class SearchUI:
                 title=ft.Text("Document Preview"),
                 content=ft.Container(
                     content=ft.Image(
-                        src=self.temp_file,
-                        width=600,
-                        height=800,
-                        fit=ft.ImageFit.CONTAIN,
+                        src=display_path, width=600, height=800, fit=ft.ImageFit.CONTAIN
                     ),
                     padding=10,
                 ),
@@ -278,11 +278,17 @@ class SearchUI:
                 actions_alignment=ft.MainAxisAlignment.END,
             )
 
+            # Hide loading overlay before showing dialog
+            self.page.overlay_service.hide_all()
             self.page.open(dialog)
             self.page.update()
+
         except Exception as ex:
-            # Show error message
-            snack_bar = ft.SnackBar(content=ft.Text(f"Error viewing file: {str(ex)}"))
+            self.page.overlay_service.hide_all()
+            snack_bar = ft.SnackBar(
+                content=ft.Text(f"Error viewing file: {str(ex)}"),
+                bgcolor=ft.Colors.RED_700,
+            )
             self.page.open(snack_bar)
         finally:
             self.page.update()

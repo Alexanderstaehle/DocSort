@@ -6,6 +6,11 @@ import torch
 import argostranslate.package
 from transformers import AutoTokenizer, AutoModel
 from doctr.models import db_resnet50, crnn_vgg16_bn
+from docling.utils.model_downloader import download_models as download_docling_models
+from sentence_transformers import SentenceTransformer
+from docling.datamodel.pipeline_options import PdfPipelineOptions
+from docling.document_converter import DocumentConverter, PdfFormatOption
+from docling.datamodel.base_models import InputFormat
 
 
 def setup_directory():
@@ -49,23 +54,30 @@ def setup_transformers_models(models_path):
     # ModernBERT for zero-shot classification
     print("Downloading ModernBERT...")
     model_name = "MoritzLaurer/ModernBERT-base-zeroshot-v2.0"
-    AutoTokenizer.from_pretrained(model_name, cache_dir=models_path)
-    AutoModel.from_pretrained(model_name, cache_dir=models_path)
+    AutoTokenizer.from_pretrained(
+        model_name, cache_dir=models_path, local_files_only=False
+    )
+    AutoModel.from_pretrained(model_name, cache_dir=models_path, local_files_only=False)
 
     # BERT-NER for company detection
     print("Downloading BERT-NER...")
     model_name = "dslim/bert-base-NER"
-    AutoTokenizer.from_pretrained(model_name, cache_dir=models_path)
-    AutoModel.from_pretrained(model_name, cache_dir=models_path)
-
-    print("Downloading Sentence Transformer...")
-    sentence_model = "all-MiniLM-L6-v2"
-    from sentence_transformers import SentenceTransformer
-
-    model = SentenceTransformer(
-        sentence_model, cache_folder=str(models_path / "sentence-transformer")
+    AutoTokenizer.from_pretrained(
+        model_name, cache_dir=models_path, local_files_only=False
     )
-    print("Sentence Transformer saved successfully")
+    AutoModel.from_pretrained(model_name, cache_dir=models_path, local_files_only=False)
+
+    # Setup Sentence Transformer with explicit save
+    print("Setting up Sentence Transformer...")
+    sentence_model = "all-MiniLM-L6-v2"
+    model_save_path = models_path / sentence_model
+
+    if not model_save_path.exists():
+        print(f"Downloading Sentence Transformer to {model_save_path}")
+        model = SentenceTransformer(sentence_model)
+        model.save(str(model_save_path))
+    else:
+        print("Sentence Transformer already downloaded")
 
 
 def setup_argos_models(models_path):
@@ -101,6 +113,28 @@ def setup_argos_models(models_path):
             print(f"Warning: Could not find package for {from_code}->{to_code}")
 
 
+def setup_docling_models(models_path):
+    """Download and setup docling models"""
+    print("Setting up docling models...")
+    docling_path = models_path / "docling"
+    docling_path.mkdir(exist_ok=True)
+    # Download docling models to our custom path
+    download_docling_models(docling_path, progress=True)
+
+    # Verify models by attempting to create a converter
+    try:
+        pipeline_options = PdfPipelineOptions(artifacts_path=str(docling_path))
+        doc_converter = DocumentConverter(
+            format_options={
+                InputFormat.PDF: PdfFormatOption(pipeline_options=pipeline_options)
+            }
+        )
+        print("docling models downloaded and verified successfully")
+    except Exception as e:
+        print(f"Error verifying docling models: {str(e)}")
+        raise
+
+
 def main():
     try:
         models_path = setup_directory()
@@ -109,6 +143,7 @@ def main():
         setup_doctr_models(models_path)
         setup_transformers_models(models_path)
         setup_argos_models(models_path)
+        setup_docling_models(models_path)
 
         print("\nAll models have been successfully downloaded and set up!")
 

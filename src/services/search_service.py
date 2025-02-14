@@ -32,31 +32,23 @@ class SearchService:
         """Load the sentence transformer model from local storage"""
         try:
             base_path = Path(__file__).parent.parent.parent
-            models_path = (
-                base_path / "storage" / "data" / "models" / "sentence-transformer"
-            )
+            models_path = base_path / "storage" / "data" / "models"
+            sentence_model = "all-MiniLM-L6-v2"
+            model_path = models_path / sentence_model
 
-            if not models_path.exists():
-                print("Local model path not found, creating directory")
-                models_path.mkdir(parents=True, exist_ok=True)
-
-            try:
-                print("Attempting to load local model...")
-                self.model = SentenceTransformer(
-                    str(models_path), local_files_only=True
-                )
+            if model_path.exists():
+                print("Loading local sentence transformer model...")
+                self.model = SentenceTransformer(str(model_path))
                 print("Successfully loaded local model")
-            except Exception as local_error:
-                print(f"Failed to load local model: {str(local_error)}")
-                print("Downloading model from HuggingFace...")
+            else:
+                print("Local model not found, downloading...")
                 self.model = SentenceTransformer(
-                    "all-MiniLM-L6-v2", cache_folder=str(models_path)
+                    sentence_model, cache_folder=str(models_path)
                 )
                 print("Model downloaded and saved successfully")
 
         except Exception as e:
             print(f"Error in model loading: {str(e)}")
-            # Last resort: try direct download without caching
             self.model = SentenceTransformer("all-MiniLM-L6-v2")
 
     def _ensure_model_loaded(self):

@@ -1,7 +1,6 @@
 import flet as ft
 import numpy as np
-import cv2
-from pages.img_upload import ImageProcessor
+from services.img_process_service import ImageProcessor
 from pages.classification import ClassificationUI
 
 

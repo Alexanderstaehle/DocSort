@@ -2,12 +2,14 @@ import flet as ft
 import pandas as pd
 import os
 from classification.zero_shot import DocumentClassifier
+from services.drive_sync_service import DriveSyncService  # Add this import
 
 
 class DriveSetupUI:
     def __init__(self, page: ft.Page):
         self.page = page
         self.manual_entries = []
+        self.sync_service = DriveSyncService()  # Add this line
         self.setup_ui()
 
     def setup_ui(self):
@@ -80,70 +82,30 @@ class DriveSetupUI:
             actions_alignment=ft.MainAxisAlignment.END,
         )
 
-        # Create loading overlay
-        self.loading_overlay = ft.Stack(
-            controls=[
-                ft.Container(
-                    bgcolor=ft.Colors.BLACK,
-                    opacity=0.7,
-                    expand=True,
-                ),
-                ft.Container(
-                    content=ft.Column(
-                        controls=[
-                            ft.ProgressRing(),
-                            ft.Text("Setting up folders...", color=ft.Colors.WHITE),
-                        ],
-                        horizontal_alignment=ft.CrossAxisAlignment.CENTER,
-                        alignment=ft.MainAxisAlignment.CENTER,
-                        spacing=10,
+        # Create reset confirmation dialog
+        self.reset_confirmation_dialog = ft.AlertDialog(
+            modal=True,
+            title=ft.Text("Confirm Reset"),
+            content=ft.Text(
+                "WARNING: This will delete all files and folders in your DocSort folder. This action cannot be undone. Are you sure you want to continue?"
+            ),
+            actions=[
+                ft.TextButton("Cancel", on_click=self.cancel_reset),
+                ft.TextButton(
+                    "Delete Everything",
+                    on_click=self.confirm_reset,
+                    style=ft.ButtonStyle(
+                        color=ft.colors.ERROR,
                     ),
-                    alignment=ft.alignment.center,
-                    expand=True,
                 ),
             ],
-            expand=True,
-            visible=False,
-        )
-
-        self.reset_overlay = ft.Stack(
-            controls=[
-                ft.Container(
-                    bgcolor=ft.Colors.BLACK,
-                    opacity=0.7,
-                    expand=True,
-                ),
-                ft.Container(
-                    content=ft.Column(
-                        controls=[
-                            ft.ProgressRing(),
-                            ft.Text(
-                                "Resetting Drive structure...", color=ft.Colors.WHITE
-                            ),
-                        ],
-                        horizontal_alignment=ft.CrossAxisAlignment.CENTER,
-                        alignment=ft.MainAxisAlignment.CENTER,
-                        spacing=10,
-                    ),
-                    alignment=ft.alignment.center,
-                    expand=True,
-                ),
-            ],
-            expand=True,
-            visible=False,
+            actions_alignment=ft.MainAxisAlignment.END,
         )
 
         # Main view
-        self.view = ft.Stack(
-            [
-                ft.Container(
-                    content=self.content,
-                    alignment=ft.alignment.center,
-                    expand=True,
-                ),
-                self.loading_overlay,
-                self.reset_overlay,
-            ],
+        self.view = ft.Container(
+            content=self.content,
+            alignment=ft.alignment.center,
             expand=True,
         )
 
@@ -212,23 +174,33 @@ class DriveSetupUI:
         self.page.update()
 
     def continue_existing(self, e):
-        """Continue with existing setup"""
+        """Continue with existing setup and sync files"""
         self.page.close(self.reset_dialog)
-        # Clear the reset dialog flag
         self.page.in_reset_dialog = False
-        # Force update and use callback for navigation
+
+        # Sync files before navigation
+        if self.sync_files():
+            self.page.go("/")
         self.page.update()
-        self.page.go("/")
 
     def reset_drive(self, e):
-        """Reset Drive folders and start setup"""
-        # Close dialog first
-        self.page.in_reset_dialog = False
+        """Show confirmation dialog before resetting"""
         self.page.close(self.reset_dialog)
-
-        # Show reset overlay and force update
-        self.reset_overlay.visible = True
+        self.page.open(self.reset_confirmation_dialog)
         self.page.update()
+
+    def cancel_reset(self, e):
+        """Cancel reset action"""
+        self.page.close(self.reset_confirmation_dialog)
+        self.page.update()
+
+    def confirm_reset(self, e):
+        """Actually perform the reset after confirmation"""
+        self.page.close(self.reset_confirmation_dialog)
+        self.page.in_reset_dialog = False
+
+        # Show reset overlay
+        self.page.overlay_service.show_loading("Resetting Drive structure...")
 
         try:
             # Delay slightly to ensure overlay is shown
@@ -238,7 +210,7 @@ class DriveSetupUI:
 
             # Use auth_handler to delete folder
             if self.page.auth_handler.delete_docsort_folder():
-                self.reset_overlay.visible = False
+                self.page.overlay_service.hide_all()
                 self.page.go("/setup")
             else:
                 print("Failed to delete DocSort folder")
@@ -248,7 +220,7 @@ class DriveSetupUI:
                     bgcolor=ft.Colors.RED_700,
                 )
                 self.page.open(self.page.snack_bar)
-                self.reset_overlay.visible = False
+                self.page.overlay_service.hide_all()
                 self.page.update()
         except Exception as e:
             print(f"Error resetting drive: {e}")
@@ -258,7 +230,7 @@ class DriveSetupUI:
                 bgcolor=ft.Colors.RED_700,
             )
             self.page.open(self.page.snack_bar)
-            self.reset_overlay.visible = False
+            self.page.overlay_service.hide_all()
             self.page.update()
 
     def save_user_categories(self, categories):
@@ -304,8 +276,7 @@ class DriveSetupUI:
 
     def create_folders(self, e):
         """Create selected folders in Drive"""
-        self.loading_overlay.visible = True
-        self.page.update()
+        self.page.overlay_service.show_loading("Setting up folders...")
 
         try:
             # Get selected categories
@@ -335,6 +306,52 @@ class DriveSetupUI:
                 self.page.go("/")
         except Exception as e:
             print(f"Error creating folders: {e}")
+            self.page.snack_bar = ft.SnackBar(
+                content=ft.Text(f"Error creating folders: {str(e)}"),
+                bgcolor=ft.Colors.RED_700,
+            )
+            self.page.open(self.page.snack_bar)
         finally:
-            self.loading_overlay.visible = False
+            self.page.overlay_service.hide_all()
+            self.page.update()
+
+    def sync_files(self):
+        """Sync files with Drive"""
+
+        def update_progress(current, total, message):
+            progress_bar = self.page.sync_overlay.controls[1].content.controls[0]
+            status_text = self.page.sync_overlay.controls[1].content.controls[2]
+            if total > 0:
+                progress_bar.value = current / total
+            status_text.value = f"{message}\n({current}/{total} files)"
+            self.page.update()
+
+        # Show sync overlay
+        self.page.sync_overlay.visible = True
+        progress_bar = self.page.sync_overlay.controls[1].content.controls[0]
+        status_text = self.page.sync_overlay.controls[1].content.controls[2]
+        progress_bar.value = 0
+        status_text.value = ""
+        self.page.update()
+
+        try:
+            success, message = self.sync_service.sync_drive_files(
+                self.page.drive_service, update_progress
+            )
+            self.page.sync_overlay.visible = False
+            snack_bar = ft.SnackBar(
+                content=ft.Text(message),
+                bgcolor=ft.Colors.GREEN_700 if success else ft.Colors.RED_700,
+            )
+            self.page.open(snack_bar)
+            return success
+        except Exception as e:
+            self.page.sync_overlay.visible = False
+            snack_bar = ft.SnackBar(
+                content=ft.Text(f"Error syncing: {str(e)}"),
+                bgcolor=ft.Colors.RED_700,
+            )
+            self.page.open(snack_bar)
+            return False
+        finally:
             self.page.update()

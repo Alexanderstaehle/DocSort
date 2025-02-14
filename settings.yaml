@@ -8,4 +8,4 @@ save_credentials_file: mycreds.txt
 get_refresh_token: True
 
 oauth_scope:
-  - https://www.googleapis.com/auth/drive.file
+  - https://www.googleapis.com/auth/drive

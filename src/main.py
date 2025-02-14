@@ -1,21 +1,38 @@
 import flet as ft
-import asyncio
 from pages.doc_scanner import DocumentScannerUI
 from pages.classification import ClassificationUI
-from ocr.ocr import OCRHandler
-from classification.zero_shot import DocumentClassifier
 from pages.google_drive_auth import GoogleDriveAuth
 from pages.upload_success import UploadSuccessUI
 from pages.drive_setup import DriveSetupUI
 from pages.search import SearchUI
+from services.drive_sync_service import DriveSyncService
+from services.overlay_service import OverlayService
 
 
-def create_app_bar(page: ft.Page, auth_handler: GoogleDriveAuth):
-    """Create header bar with Google Drive status and navigation rail"""
-    status_color = ft.Colors.GREEN if page.drive_service else ft.Colors.RED
-    email = auth_handler.get_user_email() if page.drive_service else "Not connected"
+def create_app_structure(page: ft.Page, auth_handler: GoogleDriveAuth):
+    """Create the main app structure with Pagelet (called once during initialization)"""
 
-    # Create navigation rail
+    def update_drive_status():
+        """Update drive status in AppBar"""
+        status_color = ft.Colors.GREEN if page.drive_service else ft.Colors.RED
+        email = auth_handler.get_user_email() if page.drive_service else "Not connected"
+
+        # Update status icon
+        actions[1].content.color = status_color
+        actions[1].tooltip = f"Google Drive Status: {email}"
+
+        # Update sync and logout button visibility
+        actions[2].content.visible = bool(page.drive_service)  # sync button
+        actions[3].content.visible = bool(page.drive_service)  # logout button
+
+        # Update navigation bar visibility
+        page.main_pagelet.navigation_bar.visible = bool(page.drive_service)
+
+        page.update()
+
+    # Store update function on page for access from other components
+    page.update_drive_status = update_drive_status
+
     def handle_nav_change(e):
         if e.control.selected_index == 0:
             page.go("/")
@@ -23,90 +40,153 @@ def create_app_bar(page: ft.Page, auth_handler: GoogleDriveAuth):
             page.go("/search")
         page.update()
 
-    nav_rail = ft.NavigationRail(
-        selected_index=0 if page.route not in ["/search"] else 1,
-        label_type=ft.NavigationRailLabelType.ALL,
-        min_width=100,
-        min_extended_width=200,
+    # Create sync overlay
+    page.sync_overlay = ft.Stack(
+        controls=[
+            ft.Container(
+                bgcolor=ft.Colors.BLACK,
+                opacity=0.7,
+                expand=True,
+            ),
+            ft.Container(
+                content=ft.Column(
+                    controls=[
+                        ft.ProgressBar(width=300),
+                        ft.Text("Syncing files...", color=ft.Colors.WHITE),
+                        ft.Text("", color=ft.Colors.WHITE, size=12),  # Status text
+                    ],
+                    horizontal_alignment=ft.CrossAxisAlignment.CENTER,
+                    alignment=ft.MainAxisAlignment.CENTER,
+                    spacing=10,
+                ),
+                alignment=ft.alignment.center,
+                expand=True,
+            ),
+        ],
+        expand=True,
+        visible=False,
+    )
+
+    def handle_sync(e):
+        if not page.drive_service:
+            return
+
+        # Reset overlay content
+        page.sync_overlay.visible = True
+        progress_bar = page.sync_overlay.controls[1].content.controls[0]
+        status_text = page.sync_overlay.controls[1].content.controls[2]
+        progress_bar.value = 0  # Reset progress bar
+        status_text.value = ""  # Reset status text
+        page.update()
+
+        def update_progress(current, total, message):
+            if total > 0:  # Avoid division by zero
+                progress_bar.value = current / total
+            status_text.value = f"{message}\n({current}/{total} files)"
+            page.update()
+
+        sync_service = DriveSyncService()
+        success, message = sync_service.sync_drive_files(
+            page.drive_service, update_progress
+        )
+
+        page.sync_overlay.visible = False
+        snack_bar = ft.SnackBar(
+            content=ft.Text(message),
+            bgcolor=ft.Colors.GREEN_700 if success else ft.Colors.RED_700,
+        )
+        page.open(snack_bar)
+        page.update()
+
+    # Create app bar actions
+    actions = [
+        ft.Container(
+            content=ft.Dropdown(
+                width=60,
+                options=[
+                    ft.dropdown.Option("de"),
+                    ft.dropdown.Option("en"),
+                ],
+                value="de",
+                on_change=lambda e: handle_language_change(e, page),
+            ),
+            margin=ft.margin.only(right=20),
+        ),
+        ft.Container(
+            content=ft.Icon(ft.Icons.CIRCLE, color=ft.Colors.RED, size=12),
+            tooltip="Google Drive Status: Not connected",
+            margin=ft.margin.only(right=20),
+        ),
+        ft.Container(
+            content=ft.IconButton(
+                icon=ft.Icons.SYNC,
+                tooltip="Sync with Google Drive",
+                visible=False,
+                on_click=handle_sync,
+            ),
+            margin=ft.margin.only(right=10),
+        ),
+        ft.Container(
+            content=ft.IconButton(
+                icon=ft.Icons.LOGOUT,
+                tooltip="Logout from Google Drive",
+                visible=False,
+                on_click=lambda _: handle_logout(page, auth_handler),
+            ),
+            margin=ft.margin.only(right=10),
+        ),
+    ]
+
+    # Create content container
+    content_container = ft.Container(expand=True)
+    page.content_container = content_container
+
+    # Create navigation bar with initial visible=False
+    navigation_bar = ft.NavigationBar(
         destinations=[
-            ft.NavigationRailDestination(
+            ft.NavigationBarDestination(
                 icon=ft.Icons.DOCUMENT_SCANNER_OUTLINED,
                 selected_icon=ft.Icons.DOCUMENT_SCANNER,
                 label="Scanner",
             ),
-            ft.NavigationRailDestination(
+            ft.NavigationBarDestination(
                 icon=ft.Icons.SEARCH_OUTLINED,
                 selected_icon=ft.Icons.SEARCH,
                 label="Search",
             ),
         ],
         on_change=handle_nav_change,
+        selected_index=0,
+        visible=False,  # Initially hidden
     )
 
-    language_dropdown = ft.Container(
-        content=ft.Dropdown(
-            width=60,
-            options=[
-                ft.dropdown.Option("de"),
-                ft.dropdown.Option("en"),
-            ],
-            value="de",  # Default to German
-            on_change=lambda e: handle_language_change(e, page),
+    # Create permanent Pagelet structure
+    page.main_pagelet = ft.Pagelet(
+        expand=True,
+        appbar=ft.AppBar(
+            title=ft.Text("DocSort", size=24, weight=ft.FontWeight.BOLD),
+            actions=actions,
+            bgcolor=ft.Colors.SURFACE,
         ),
-        margin=ft.margin.only(right=20),
-    )
-
-    status_icon = ft.Container(
-        content=ft.Icon(ft.Icons.CIRCLE, color=status_color, size=12),
-        tooltip=f"Google Drive Status: {email}",
-        margin=ft.margin.only(right=20),
-    )
-
-    logout_button = ft.Container(
-        content=ft.IconButton(
-            icon=ft.Icons.LOGOUT,
-            tooltip="Logout from Google Drive",
-            visible=bool(page.drive_service),
-            on_click=lambda _: handle_logout(page, auth_handler),
-        ),
-        margin=ft.margin.only(right=10),
-    )
-
-    # Create header bar using Container
-    header = ft.Container(
-        content=ft.Row(
-            [
-                ft.Text("DocSort", size=24, weight=ft.FontWeight.BOLD),
-                ft.Row(
-                    [language_dropdown, status_icon, logout_button],
-                    alignment=ft.MainAxisAlignment.END,
-                ),
-            ],
-            alignment=ft.MainAxisAlignment.SPACE_BETWEEN,
-        ),
-        padding=10,
-        bgcolor=ft.Colors.SURFACE,
-    )
-
-    # Create a container for the main content that will be updated
-    content_container = ft.Container(expand=True)
-    page.content_container = content_container  # Store reference for updates
-
-    return ft.Row(
-        [
-            nav_rail,
-            ft.VerticalDivider(width=1),
-            ft.Column(
+        content=ft.Container(
+            content=ft.Column(
                 [
-                    header,
                     ft.Container(height=1, bgcolor=ft.Colors.OUTLINE_VARIANT),
-                    content_container,
+                    ft.Container(
+                        content=content_container,
+                        expand=True,
+                        padding=20,
+                    ),
                 ],
                 expand=True,
+                spacing=0,
             ),
-        ],
-        expand=True,
+            expand=True,
+        ),
+        navigation_bar=navigation_bar,
     )
+
+    return page.main_pagelet
 
 
 def handle_logout(page: ft.Page, auth_handler: GoogleDriveAuth):
@@ -114,6 +194,7 @@ def handle_logout(page: ft.Page, auth_handler: GoogleDriveAuth):
     if auth_handler.logout():
         page.drive_service = None
         page.views.clear()
+        page.update_drive_status()
         page.go("/auth")
         page.update()
 
@@ -132,22 +213,21 @@ def handle_language_change(e, page):
 async def main(page: ft.Page):
     # Configure page
     page.title = "Document Scanner"
-    page.padding = 20
     page.window_width = 1000
     page.window_height = 800
     page.auto_scroll = True
+    page.theme = ft.Theme(
+        page_transitions=ft.PageTransitionsTheme(
+            android=ft.PageTransitionTheme.OPEN_UPWARDS,
+            ios=ft.PageTransitionTheme.CUPERTINO,
+            macos=ft.PageTransitionTheme.FADE_UPWARDS,
+            linux=ft.PageTransitionTheme.ZOOM,
+            windows=ft.PageTransitionTheme.NONE,
+        )
+    )
 
-    # Set initial preferred language BEFORE creating any UI components
-    page.preferred_language = "de"  # Move this line up
-
-    # Start loading models in background
-    async def load_models():
-        # Initialize singleton instances
-        OCRHandler()
-        DocumentClassifier()
-
-    # Start model loading in background
-    asyncio.create_task(load_models())
+    # Set initial preferred language before creating any UI components
+    page.preferred_language = "de"
 
     # Initialize refs before creating pages
     page.refs = {
@@ -167,6 +247,9 @@ async def main(page: ft.Page):
     success_ui = UploadSuccessUI(page)
     search_ui = SearchUI(page)
 
+    # Initialize overlay service
+    page.overlay_service = OverlayService(page)
+
     # Check authentication and store drive service
     if auth_handler.check_auth():
         page.drive_service = auth_handler.get_drive_service()
@@ -176,23 +259,33 @@ async def main(page: ft.Page):
         page.drive_service = None
         page.go("/auth")
 
-    def route_change(e):
-        # Remove any auth view before adding a new one
-        page.views.clear()
+    # Create main app structure once
+    main_pagelet = create_app_structure(page, auth_handler)
 
+    # Initial update of drive status
+    page.update_drive_status()
+
+    def route_change(e):
+        page.views.clear()
         scanner_ui.editor_view.visible = False
         scanner_ui.result_view.visible = False
         classification_ui.view.visible = False
 
-        # Create app bar for all views
-        app_bar = create_app_bar(page, auth_handler)
+        # Update navigation bar visibility along with selected index
+        if page.drive_service:
+            page.main_pagelet.navigation_bar.visible = True
+            page.main_pagelet.navigation_bar.selected_index = (
+                1 if page.route == "/search" else 0
+            )
+        else:
+            page.main_pagelet.navigation_bar.visible = False
 
         # Check if authentication is needed
         if not page.drive_service and page.route != "/auth":
             page.go("/auth")
             return
 
-        # Update the content based on the route
+        # Update only the content based on the route
         if page.route == "/auth":
             page.content_container.content = auth_handler.content
         elif page.route == "/setup":
@@ -210,27 +303,42 @@ async def main(page: ft.Page):
             classification_ui.view.visible = True
             page.content_container.content = classification_ui.view
         elif page.route == "/success":
-            # Get success details from storage
             folder_path = page.client_storage.get("success_folder_path")
             filename = page.client_storage.get("success_filename")
-            # Reset scanner UI to clear the image
             scanner_ui.reset_ui()
-            # Show success page with details
             success_ui.show_success(folder_path, filename)
             page.content_container.content = success_ui.view
         elif page.route == "/search":
             page.content_container.content = search_ui.view
 
+        # Update view with existing Pagelet and overlays
         page.views.append(
             ft.View(
                 page.route,
-                [app_bar],
+                [
+                    ft.Stack(
+                        [
+                            ft.Container(  # Wrap everything in a container
+                                content=ft.Stack(
+                                    [
+                                        page.main_pagelet,
+                                        page.sync_overlay,
+                                    ],
+                                ),
+                                expand=True,
+                            ),
+                            page.overlay_stack,  # Place overlay_stack last for highest z-index
+                        ],
+                        expand=True,
+                    ),
+                ],
             )
         )
 
-        # Chain the route change events
         if hasattr(classification_ui, "handle_route_change"):
             classification_ui.handle_route_change(e)
+        # Update drive status when route changes
+        page.update_drive_status()
         page.update()
 
     def view_pop(e):

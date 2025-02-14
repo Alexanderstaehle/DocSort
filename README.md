@@ -7,7 +7,6 @@ DocSort is a Flet-based application that streamlines document digitalization and
 - Google Drive integration
 - Natural language search capabilities through RAG (Retrieval-Augmented Generation)
 - Customizable document categories
-- Intelligent document classification
 - All ML models are running offline so no data is published (except over Google Drive API)
 
 Perfect for managing personal or business documents while maintaining searchable digital records.
@@ -53,6 +52,7 @@ flet run
 - Setup page
 - Offline Inference no extra API's (except Google Drive access)
 - Vector-based search functionality
+- Allow manual upload and sync search service
 
 ### 🚧 In Development
 1. **Document Scanning**
@@ -61,6 +61,7 @@ flet run
 
 2. **Smart Organization**
     - Suggest new category if "Other" selected
+    - Folder explorer
 
 3. **Multi-platform support**
     - Build application on Android and iOS
@@ -69,6 +70,3 @@ flet run
 ### Known Issues
 - File upload on web returns None for file path (seems to be an issue with Flet)
 - Cleanup console outputs
-
-
-- ProgressRing while resetting gdrive

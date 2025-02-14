@@ -3,7 +3,7 @@ channels:
   - conda-forge
   - defaults
 dependencies:
-  - python=3.12
+  - python=">=3.10,<3.13"
   - pandas
   - numpy
   - opencv
@@ -21,3 +21,5 @@ pip:
   - torchvision
   - "python-doctr[torch]"
   - pydrive2
+  - docling
+  - pypdfium2

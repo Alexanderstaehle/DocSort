@@ -1,39 +1,58 @@
 import os
+from pathlib import Path
 import pandas as pd
 from transformers import pipeline
 
 
 class CompanyDetector:
     def __init__(self):
-        # Set up local model directory
-        base_path = os.path.dirname(os.path.dirname(os.path.dirname(__file__)))
-        models_path = os.path.join(base_path, "storage", "data", "models")
+        self.base_path = Path(__file__).parent.parent.parent
+        self.models_path = self.base_path / "storage" / "data" / "models"
+        self.companies_path = self.base_path / "storage" / "data" / "company_names.csv"
 
-        # Initialize NER pipeline with local model path
-        self.ner = pipeline(
+        # Initialize NER pipeline with local model
+        self.ner = self._initialize_ner()
+        self.companies = self._load_companies()
+        self.temp_companies = []
+
+    def _initialize_ner(self):
+        """Initialize the NER pipeline with local model"""
+        return pipeline(
             "ner",
             model="dslim/bert-base-NER",
             device=-1,
-            model_kwargs={"cache_dir": models_path, "local_files_only": True},
+            model_kwargs={"cache_dir": self.models_path, "local_files_only": True},
         )
-        self.companies = self.load_companies()
-        self.temp_companies = []
 
-    def load_companies(self):
+    def _load_companies(self) -> set:
+        """Load companies from CSV file"""
         try:
-            base_path = os.path.dirname(os.path.dirname(os.path.dirname(__file__)))
-            file_path = os.path.join(base_path, "storage", "data", "company_names.csv")
-            df = pd.read_csv(file_path)
-            return df["company"].tolist()
+            if self.companies_path.exists():
+                return set(pd.read_csv(self.companies_path, header=None)[0])
+            return set()
         except Exception as e:
             print(f"Error loading companies: {str(e)}")
-            return []
+            return set()
 
-    def detect_companies(self, text):
-        # Get NER predictions
+    def _save_companies(self) -> bool:
+        """Save companies to CSV file"""
+        try:
+            companies_list = sorted(self.companies)
+            pd.Series(companies_list).to_csv(
+                self.companies_path, index=False, header=False
+            )
+            return True
+        except Exception as e:
+            print(f"Error saving companies: {str(e)}")
+            return False
+
+    def _process_company_name(self, tokens) -> str:
+        """Process a sequence of tokens into a company name"""
+        return " ".join(tokens).replace(" ##", "")
+
+    def detect_companies(self, text: str) -> list:
+        """Detect company names in text using NER"""
         predictions = self.ner(text)
-
-        # Extract company names (entities labeled as 'ORG')
         companies = []
         current_company = []
 
@@ -41,45 +60,37 @@ class CompanyDetector:
             if pred["entity"] in ["B-ORG", "I-ORG"]:
                 current_company.append(pred["word"])
             elif current_company:
-                company_name = " ".join(current_company).replace(" ##", "")
-                if "#" not in company_name:  # Only add if no '#' in name
+                company_name = self._process_company_name(current_company)
+                if "#" not in company_name:
                     companies.append(company_name)
                 current_company = []
 
+        # Process last company if exists
         if current_company:
-            company_name = " ".join(current_company).replace(" ##", "")
-            if "#" not in company_name:  # Only add if no '#' in name
+            company_name = self._process_company_name(current_company)
+            if "#" not in company_name:
                 companies.append(company_name)
 
-        return companies if companies else []
+        return companies
 
-    def add_company(self, company_name):
-        """Add a company to the list if it doesn't exist"""
-        try:
-            # Case-insensitive check for existing company
-            if any(
-                company.lower() == company_name.lower() for company in self.companies
-            ):
-                print(f"Company '{company_name}' already exists")
-                return True
-
-            self.companies.append(company_name)
-            base_path = os.path.dirname(os.path.dirname(os.path.dirname(__file__)))
-            file_path = os.path.join(base_path, "storage", "data", "company_names.csv")
-            pd.DataFrame({"company": self.companies}).to_csv(file_path, index=False)
-            return True
-        except Exception as e:
-            print(f"Error adding company: {str(e)}")
+    def add_company(self, company_name: str) -> bool:
+        """Add a new company if it doesn't exist"""
+        if not company_name or company_name.lower() in {
+            c.lower() for c in self.companies
+        }:
             return False
 
-    def get_companies(self):
-        """Return both permanent and temporary companies"""
-        return list(dict.fromkeys(self.companies + self.temp_companies))
+        self.companies.add(company_name)
+        return self._save_companies()
+
+    def get_companies(self) -> list:
+        """Get all companies (permanent and temporary)"""
+        return sorted(set(list(self.companies) + self.temp_companies))
 
     def clear_temp_companies(self):
         """Clear temporary companies"""
         self.temp_companies = []
 
-    def get_permanent_companies(self):
-        """Return only the permanent companies list"""
-        return self.companies.copy()
+    def get_permanent_companies(self) -> list:
+        """Get only permanent companies"""
+        return sorted(self.companies)
