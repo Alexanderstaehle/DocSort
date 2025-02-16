@@ -8,6 +8,12 @@ from langdetect import detect
 import argostranslate.package
 import argostranslate.translate
 import shutil
+import logging  # Add this import
+import warnings  # Add this import
+
+# Configure logging to suppress transformer warnings
+logging.getLogger("transformers").setLevel(logging.ERROR)
+warnings.filterwarnings("ignore", category=UserWarning)
 
 
 class DocumentClassifier:
@@ -41,73 +47,83 @@ class DocumentClassifier:
     def _load_models(self):
         """Load NLP models"""
         try:
-            # Set up local model directories
-            base_path = os.path.dirname(os.path.dirname(os.path.dirname(__file__)))
-            models_path = os.path.join(base_path, "storage", "data", "models")
-            argos_path = os.path.join(models_path, "argos")
+            # Suppress all warnings temporarily during model loading
+            with warnings.catch_warnings():
+                warnings.simplefilter("ignore")
+                # Set transformers logging to error only
+                logging.getLogger("transformers").setLevel(logging.ERROR)
 
-            # Ensure model directories exist
-            os.makedirs(argos_path, exist_ok=True)
+                # Set up local model directories
+                base_path = os.path.dirname(os.path.dirname(os.path.dirname(__file__)))
+                models_path = os.path.join(base_path, "storage", "data", "models")
+                argos_path = os.path.join(models_path, "argos")
 
-            # Load classifier with local model path
-            self.classifier = pipeline(
-                "zero-shot-classification",
-                model="MoritzLaurer/ModernBERT-base-zeroshot-v2.0",
-                device=-1,
-                model_kwargs={"cache_dir": models_path, "local_files_only": True},
-            )
+                # Ensure model directories exist
+                os.makedirs(argos_path, exist_ok=True)
 
-            # Point argostranslate to our local package directory
-            argostranslate.package.INSTALLED_PACKAGES_PATH = argos_path
+                # Load classifier with local model path
+                self.classifier = pipeline(
+                    "zero-shot-classification",
+                    model="MoritzLaurer/ModernBERT-base-zeroshot-v2.0",
+                    device=-1,
+                    model_kwargs={"cache_dir": models_path, "local_files_only": True},
+                )
 
-            # Check if we have packages installed by trying to get installed languages
-            installed_languages = argostranslate.translate.get_installed_languages()
+                # Point argostranslate to our local package directory
+                argostranslate.package.INSTALLED_PACKAGES_PATH = argos_path
 
-            if not installed_languages:
-                print("No local packages found, downloading...")
-                # Download and install Argos Translate packages
-                argostranslate.package.update_package_index()
-                available_packages = argostranslate.package.get_available_packages()
+                # Check if we have packages installed by trying to get installed languages
+                installed_languages = argostranslate.translate.get_installed_languages()
 
-                # Install required language pairs
-                for source_lang, lang_pair in self.lang_to_model.items():
-                    if lang_pair:
-                        try:
-                            # Find packages for both directions
-                            to_en_package = next(
-                                (
-                                    pkg
-                                    for pkg in available_packages
-                                    if pkg.from_code == source_lang
-                                    and pkg.to_code == "en"
-                                ),
-                                None,
-                            )
-                            en_to_package = next(
-                                (
-                                    pkg
-                                    for pkg in available_packages
-                                    if pkg.from_code == "en"
-                                    and pkg.to_code == source_lang
-                                ),
-                                None,
-                            )
+                if not installed_languages:
+                    print("No local packages found, downloading...")
+                    # Download and install Argos Translate packages
+                    argostranslate.package.update_package_index()
+                    available_packages = argostranslate.package.get_available_packages()
 
-                            # Download and install packages
-                            if to_en_package:
-                                package_path = to_en_package.download()
-                                argostranslate.package.install_from_path(package_path)
-                            if en_to_package:
-                                package_path = en_to_package.download()
-                                argostranslate.package.install_from_path(package_path)
-                        except Exception as e:
-                            print(
-                                f"Error installing language pair for {source_lang}: {str(e)}"
-                            )
-            else:
-                print("Using existing local packages")
+                    # Install required language pairs
+                    for source_lang, lang_pair in self.lang_to_model.items():
+                        if lang_pair:
+                            try:
+                                # Find packages for both directions
+                                to_en_package = next(
+                                    (
+                                        pkg
+                                        for pkg in available_packages
+                                        if pkg.from_code == source_lang
+                                        and pkg.to_code == "en"
+                                    ),
+                                    None,
+                                )
+                                en_to_package = next(
+                                    (
+                                        pkg
+                                        for pkg in available_packages
+                                        if pkg.from_code == "en"
+                                        and pkg.to_code == source_lang
+                                    ),
+                                    None,
+                                )
 
-            print("Classification models loaded successfully")
+                                # Download and install packages
+                                if to_en_package:
+                                    package_path = to_en_package.download()
+                                    argostranslate.package.install_from_path(
+                                        package_path
+                                    )
+                                if en_to_package:
+                                    package_path = en_to_package.download()
+                                    argostranslate.package.install_from_path(
+                                        package_path
+                                    )
+                            except Exception as e:
+                                print(
+                                    f"Error installing language pair for {source_lang}: {str(e)}"
+                                )
+                else:
+                    print("Using existing local packages")
+
+                print("Classification models loaded successfully")
 
         except Exception as e:
             print(f"Error loading models: {str(e)}")

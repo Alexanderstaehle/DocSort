@@ -95,7 +95,7 @@ class DriveSetupUI:
                     "Delete Everything",
                     on_click=self.confirm_reset,
                     style=ft.ButtonStyle(
-                        color=ft.colors.ERROR,
+                        color=ft.Colors.ERROR,
                     ),
                 ),
             ],

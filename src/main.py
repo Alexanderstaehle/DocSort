@@ -1,3 +1,7 @@
+from utils.warning_filters import setup_warning_filters
+
+setup_warning_filters()
+
 import flet as ft
 from pages.doc_scanner import DocumentScannerUI
 from pages.classification import ClassificationUI

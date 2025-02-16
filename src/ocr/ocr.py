@@ -69,11 +69,15 @@ class OCRHandler:
                 )
                 del temp_predictor
 
-            # Load models from local storage
-            det_params = torch.load(det_model_path, map_location="cpu")
+            # Load models from local storage with weights_only=True
+            det_params = torch.load(
+                det_model_path, map_location="cpu", weights_only=True
+            )
             det_model.load_state_dict(det_params)
 
-            reco_params = torch.load(reco_model_path, map_location="cpu")
+            reco_params = torch.load(
+                reco_model_path, map_location="cpu", weights_only=True
+            )
             reco_model.load_state_dict(reco_params)
 
             # Create predictor
