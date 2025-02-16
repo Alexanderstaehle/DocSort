@@ -8,8 +8,8 @@ from langdetect import detect
 import argostranslate.package
 import argostranslate.translate
 import shutil
-import logging  # Add this import
-import warnings  # Add this import
+import logging
+import warnings
 
 # Configure logging to suppress transformer warnings
 logging.getLogger("transformers").setLevel(logging.ERROR)
@@ -330,10 +330,8 @@ class DocumentClassifier:
             filtered_results = [
                 (self.map_category(label, self.preferred_language), score)
                 for label, score in zip(result["labels"], result["scores"])
-                if score > 0.05  # Lower threshold from 0.1 to 0.05
-            ][
-                :5
-            ]  # Increase from 3 to 5 results
+                if score > 0.1
+            ][:5]
 
             if not filtered_results:
                 # If no results above threshold, take top result anyway

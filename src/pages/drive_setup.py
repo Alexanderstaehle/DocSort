@@ -1,18 +1,33 @@
 import flet as ft
 import pandas as pd
-import os
+import time
 from classification.zero_shot import DocumentClassifier
-from services.drive_sync_service import DriveSyncService  # Add this import
+from services.drive_sync_service import DriveSyncService
+import os
+import json
 
 
 class DriveSetupUI:
     def __init__(self, page: ft.Page):
         self.page = page
         self.manual_entries = []
-        self.sync_service = DriveSyncService()  # Add this line
+        self.sync_service = DriveSyncService()
+        self.folder_language = "de"  # Default folder language
         self.setup_ui()
 
     def setup_ui(self):
+        # Add language selector at the top
+        self.language_dropdown = ft.Dropdown(
+            label="Select folder language",
+            width=300,
+            value=self.folder_language,
+            options=[
+                ft.dropdown.Option("de", "Deutsch"),
+                ft.dropdown.Option("en", "English"),
+            ],
+            on_change=self.on_language_change,
+        )
+
         # Load initial categories with preferred language
         categories = self._load_initial_categories(self.page.preferred_language)
 
@@ -40,12 +55,33 @@ class DriveSetupUI:
         # Setup content
         self.content = ft.Column(
             [
-                ft.Text(
-                    "DocSort Drive Setup",
-                    size=32,
-                    weight=ft.FontWeight.BOLD,
-                    text_align=ft.TextAlign.CENTER,
+                # Header row with title and continue button
+                ft.Row(
+                    controls=[
+                        ft.Column(
+                            controls=[
+                                ft.Text(
+                                    "DocSort Drive Setup",
+                                    size=32,
+                                    weight=ft.FontWeight.BOLD,
+                                    text_align=ft.TextAlign.LEFT,
+                                ),
+                            ],
+                            expand=True,
+                        ),
+                        ft.FilledButton(
+                            "Continue",
+                            on_click=self.create_folders,
+                        ),
+                    ],
+                    alignment=ft.MainAxisAlignment.SPACE_BETWEEN,
                 ),
+                ft.Text(
+                    "Select the language for your folder structure:",
+                    size=16,
+                ),
+                self.language_dropdown,
+                ft.Divider(),
                 ft.Text(
                     "Select categories to create in Google Drive:",
                     size=16,
@@ -58,10 +94,6 @@ class DriveSetupUI:
                     icon=ft.Icons.ADD_CIRCLE,
                     tooltip="Add custom category",
                     on_click=self.add_manual_entry,
-                ),
-                ft.FilledButton(
-                    "Continue",
-                    on_click=self.create_folders,
                 ),
             ],
             horizontal_alignment=ft.CrossAxisAlignment.CENTER,
@@ -104,7 +136,16 @@ class DriveSetupUI:
 
         # Main view
         self.view = ft.Container(
-            content=self.content,
+            content=ft.Column(
+                [
+                    ft.Column(
+                        controls=[self.content],
+                        scroll=ft.ScrollMode.AUTO,
+                        expand=True,
+                    )
+                ],
+                expand=True,
+            ),
             alignment=ft.alignment.center,
             expand=True,
         )
@@ -127,6 +168,28 @@ class DriveSetupUI:
         # Update the checkbox container with new options
         checkbox_container = self.content.controls[2].content
         checkbox_container.controls = self.category_checks
+        self.page.update()
+
+    def on_language_change(self, e):
+        """Handle language change in setup"""
+        self.folder_language = e.data
+        # Update category list to show names in selected language
+        categories = self._load_initial_categories(self.folder_language)
+
+        # Create new checkbox list with categories in selected language
+        self.category_checks = [
+            ft.Checkbox(label=cat, value=False) for cat in categories
+        ]
+
+        # Update the checkbox container
+        checkbox_container = next(
+            control
+            for control in self.content.controls
+            if isinstance(control, ft.Container)
+            and isinstance(control.content, ft.Column)
+            and all(isinstance(c, ft.Checkbox) for c in control.content.controls)
+        )
+        checkbox_container.content.controls = self.category_checks
         self.page.update()
 
     def add_manual_entry(self, e):
@@ -178,10 +241,71 @@ class DriveSetupUI:
         self.page.close(self.reset_dialog)
         self.page.in_reset_dialog = False
 
-        # Sync files before navigation
-        if self.sync_files():
-            self.page.go("/")
+        # Show sync overlay with language detection message
+        self.page.sync_overlay.visible = True
+        progress_bar = self.page.sync_overlay.controls[1].content.controls[0]
+        status_text = self.page.sync_overlay.controls[1].content.controls[2]
+        progress_bar.value = None  # Show indeterminate progress
+        status_text.value = "Detecting folder structure..."
         self.page.update()
+
+        try:
+            # Detect folder language from existing structure
+            detected_lang = self._detect_folder_language()
+            if detected_lang:
+                # Save detected language to config
+                self.save_folder_language(detected_lang)
+
+            # Continue with sync
+            if self.sync_files():
+                self.page.go("/")
+        finally:
+            self.page.sync_overlay.visible = False
+            self.page.update()
+
+    def _detect_folder_language(self) -> str:
+        """Detect folder language from existing structure"""
+        try:
+            # Get DocSort root folder
+            docsort_list = self.page.drive_service.ListFile(
+                {
+                    "q": "title='DocSort' and 'root' in parents and mimeType='application/vnd.google-apps.folder' and trashed=false"
+                }
+            ).GetList()
+
+            if not docsort_list:
+                return None
+
+            # Get all folders in DocSort
+            folders = self.page.drive_service.ListFile(
+                {
+                    "q": f"'{docsort_list[0]['id']}' in parents and mimeType='application/vnd.google-apps.folder' and trashed=false"
+                }
+            ).GetList()
+
+            folder_names = [folder["title"] for folder in folders]
+
+            # Load category mappings
+            df = pd.read_csv("storage/data/category_mapping.csv")
+
+            # Check which language has the most matches
+            lang_matches = {}
+            for lang in df.columns:
+                categories = df[lang].str.lower().tolist()
+                matches = sum(1 for name in folder_names if name.lower() in categories)
+                lang_matches[lang] = matches
+
+            # Return language with most matches
+            if lang_matches:
+                detected = max(lang_matches.items(), key=lambda x: x[1])[0]
+                print(f"Detected folder language: {detected}")
+                return detected
+
+            return "de"  # Default to German if no matches
+
+        except Exception as e:
+            print(f"Error detecting folder language: {e}")
+            return "de"
 
     def reset_drive(self, e):
         """Show confirmation dialog before resetting"""
@@ -204,12 +328,14 @@ class DriveSetupUI:
 
         try:
             # Delay slightly to ensure overlay is shown
-            import time
-
             time.sleep(0.1)
 
             # Use auth_handler to delete folder
             if self.page.auth_handler.delete_docsort_folder():
+                # Delete company names file
+                if os.path.exists("storage/data/company_names.csv"):
+                    os.remove("storage/data/company_names.csv")
+
                 self.page.overlay_service.hide_all()
                 self.page.go("/setup")
             else:
@@ -239,21 +365,21 @@ class DriveSetupUI:
             # Get existing category mappings
             df = pd.read_csv("storage/data/category_mapping.csv")
 
-            # Create DataFrame for user categories
+            # Create empty DataFrame with same columns
             user_categories = pd.DataFrame(columns=df.columns)
 
-            # Add selected predefined categories
-            selected_rows = df[df[self.page.preferred_language].isin(categories)]
-            user_categories = pd.concat([user_categories, selected_rows])
-
-            # Get classifier instance for translations
-            classifier = DocumentClassifier()
-
-            # Add manual entries with translations
             for category in categories:
-                if category not in user_categories[self.page.preferred_language].values:
+                # Check if category exists in predefined mappings
+                existing_row = df[df[self.page.preferred_language] == category]
+
+                if not existing_row.empty:
+                    # Add existing category mapping
+                    user_categories = pd.concat([user_categories, existing_row])
+                else:
+                    # Handle manual entry
                     new_row = {}
                     source_lang = self.page.preferred_language
+                    classifier = DocumentClassifier(preferred_language=source_lang)
 
                     # Translate to each supported language
                     for target_lang in df.columns:
@@ -265,7 +391,10 @@ class DriveSetupUI:
                             )
                             new_row[target_lang] = translated
 
-                    user_categories.loc[len(user_categories)] = new_row
+                    # Add new row to user categories
+                    user_categories = pd.concat(
+                        [user_categories, pd.DataFrame([new_row])], ignore_index=True
+                    )
 
             # Save to user_categories.csv
             user_categories.to_csv("storage/data/user_categories.csv", index=False)
@@ -279,6 +408,9 @@ class DriveSetupUI:
         self.page.overlay_service.show_loading("Setting up folders...")
 
         try:
+            # Store the selected folder language
+            self.save_folder_language(self.folder_language)
+
             # Get selected categories
             selected_cats = [
                 check.label for check in self.category_checks if check.value
@@ -314,6 +446,14 @@ class DriveSetupUI:
         finally:
             self.page.overlay_service.hide_all()
             self.page.update()
+
+    def save_folder_language(self, language):
+        """Save folder language to configuration"""
+        config_path = "storage/data/config.json"
+        config = {"folder_language": language}
+        os.makedirs(os.path.dirname(config_path), exist_ok=True)
+        with open(config_path, "w") as f:
+            json.dump(config, f)
 
     def sync_files(self):
         """Sync files with Drive"""

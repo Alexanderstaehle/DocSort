@@ -9,10 +9,10 @@ from pages.google_drive_auth import GoogleDriveAuth
 from pages.upload_success import UploadSuccessUI
 from pages.drive_setup import DriveSetupUI
 from pages.search import SearchUI
-from pages.folder_explorer import FolderExplorerUI  # Add this import
+from pages.folder_explorer import FolderExplorerUI
 from services.drive_sync_service import DriveSyncService
 from services.overlay_service import OverlayService
-from services.search_service import SearchService  # Add this import at the top with other imports
+from services.search_service import SearchService
 
 
 def create_app_structure(page: ft.Page, auth_handler: GoogleDriveAuth):
@@ -24,12 +24,12 @@ def create_app_structure(page: ft.Page, auth_handler: GoogleDriveAuth):
         email = auth_handler.get_user_email() if page.drive_service else "Not connected"
 
         # Update status icon
-        actions[1].content.color = status_color
-        actions[1].tooltip = f"Google Drive Status: {email}"
+        actions[0].content.color = status_color
+        actions[0].tooltip = f"Google Drive Status: {email}"
 
         # Update sync and logout button visibility
-        actions[2].content.visible = bool(page.drive_service)  # sync button
-        actions[3].content.visible = bool(page.drive_service)  # logout button
+        actions[1].content.visible = bool(page.drive_service)  # sync button
+        actions[2].content.visible = bool(page.drive_service)  # logout button
 
         # Update navigation bar visibility
         page.main_pagelet.navigation_bar.visible = bool(page.drive_service)
@@ -108,18 +108,6 @@ def create_app_structure(page: ft.Page, auth_handler: GoogleDriveAuth):
 
     # Create app bar actions
     actions = [
-        ft.Container(
-            content=ft.Dropdown(
-                width=60,
-                options=[
-                    ft.dropdown.Option("de"),
-                    ft.dropdown.Option("en"),
-                ],
-                value="de",
-                on_change=lambda e: handle_language_change(e, page),
-            ),
-            margin=ft.margin.only(right=20),
-        ),
         ft.Container(
             content=ft.Icon(ft.Icons.CIRCLE, color=ft.Colors.RED, size=12),
             tooltip="Google Drive Status: Not connected",
@@ -205,22 +193,29 @@ def create_app_structure(page: ft.Page, auth_handler: GoogleDriveAuth):
 def handle_logout(page: ft.Page, auth_handler: GoogleDriveAuth):
     """Handle logout action"""
     if auth_handler.logout():
+        # Clear drive service
         page.drive_service = None
+
+        # Reset all UI components
+        if hasattr(page, "classification_ui"):
+            page.classification_ui.view.visible = False
+        if hasattr(page, "scanner_ui"):
+            page.scanner_ui.editor_view.visible = False
+            page.scanner_ui.result_view.visible = False
+        if hasattr(page, "search_ui"):
+            page.search_ui.view.visible = False
+        if hasattr(page, "folder_explorer_ui"):
+            page.folder_explorer_ui.view.visible = False
+
+        # Clear all views and storage
         page.views.clear()
+        page.client_storage.clear()
+        page.window_title = "DocSort - Login"
+
+        # Update status and navigate to auth
         page.update_drive_status()
         page.go("/auth")
         page.update()
-
-
-def handle_language_change(e, page):
-    page.preferred_language = e.data
-    # Update UI if drive setup is active
-    if hasattr(page, "setup_ui") and page.setup_ui:
-        page.setup_ui.update_categories(e.data)
-    # Update UI if classification is active
-    if hasattr(page, "classification_ui") and page.classification_ui:
-        page.classification_ui.doc_classifier.set_preferred_language(e.data)
-    page.update()
 
 
 async def main(page: ft.Page):
@@ -240,7 +235,7 @@ async def main(page: ft.Page):
     )
 
     # Set initial preferred language before creating any UI components
-    page.preferred_language = "de"
+    page.preferred_language = "de"  # Default language
 
     # Initialize refs before creating pages
     page.refs = {
@@ -262,7 +257,7 @@ async def main(page: ft.Page):
     classification_ui = ClassificationUI(page)
     success_ui = UploadSuccessUI(page)
     search_ui = SearchUI(page)
-    folder_explorer_ui = FolderExplorerUI(page)  # Add folder_explorer_ui to page initialization
+    folder_explorer_ui = FolderExplorerUI(page)
 
     # Initialize overlay service
     page.overlay_service = OverlayService(page)

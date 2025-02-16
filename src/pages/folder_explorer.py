@@ -36,7 +36,7 @@ class FolderExplorerUI:
         self.contents_grid = ft.GridView(
             expand=True,
             runs_count=5,
-            max_extent=150,  # Increase max_extent
+            max_extent=150,
             spacing=10,
             run_spacing=10,
             padding=20,
@@ -124,7 +124,11 @@ class FolderExplorerUI:
     def create_item_card(self, item: Dict, is_folder: bool, is_synced: bool) -> ft.Card:
         """Create a card for a folder or file item"""
         icon = ft.icons.FOLDER if is_folder else ft.icons.DESCRIPTION
-        icon_color = ft.colors.BLUE if is_folder else (ft.colors.GREEN if is_synced else ft.colors.ORANGE)
+        icon_color = (
+            ft.colors.BLUE
+            if is_folder
+            else (ft.colors.GREEN if is_synced else ft.colors.ORANGE)
+        )
 
         def handle_click(e):
             if is_folder:

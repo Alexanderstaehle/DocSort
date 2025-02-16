@@ -4,11 +4,13 @@ from classification.company_detection import CompanyDetector
 from services.search_service import SearchService
 import cv2
 import time
+import json
 
 
 class ClassificationService:
     def __init__(self):
         self._initialize_services()
+        self.folder_language = self._load_folder_language()
 
     def _initialize_services(self):
         """Initialize required services"""
@@ -16,6 +18,20 @@ class ClassificationService:
         self.doc_classifier = DocumentClassifier()
         self.company_detector = CompanyDetector()
         self.search_service = SearchService()
+
+    def _load_folder_language(self):
+        """Load folder language from config"""
+        try:
+            with open("storage/data/config.json", "r") as f:
+                config = json.load(f)
+                return config.get("folder_language", "de")
+        except:
+            return "de"  # Default to German if config not found
+
+    def update_language(self, new_language: str):
+        """Update preferred language and reinitialize services"""
+        self.preferred_language = new_language
+        self.doc_classifier = DocumentClassifier(self.preferred_language)
 
     def process_document(self, image_path: str) -> dict:
         """Process document with OCR and classification"""
@@ -37,6 +53,13 @@ class ClassificationService:
 
             # Get document classification
             doc_type = self.doc_classifier.classify_text(ocr_result["full_text"])
+
+            # Map the category to folder language
+            if doc_type["labels"]:
+                doc_type["labels"] = [
+                    self.doc_classifier.map_category(label, self.folder_language)
+                    for label in doc_type["labels"]
+                ]
 
             return {
                 "success": True,

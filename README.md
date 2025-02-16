@@ -10,6 +10,8 @@ DocSort is a Flet-based application that streamlines document digitalization and
 - All ML models are running offline so no data is published (except over Google Drive API)
 
 Perfect for managing personal or business documents while maintaining searchable digital records.
+
+Currently supported languages: English, German
 ## Installation
 
 1. Create and activate the conda environment:

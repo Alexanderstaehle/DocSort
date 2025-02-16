@@ -6,7 +6,9 @@ from services.classification_service import ClassificationService
 class ClassificationUI:
     def __init__(self, page: ft.Page):
         self.page = page
-        self.classification_service = ClassificationService()
+        self.classification_service = (
+            ClassificationService()
+        )  # Remove preferred_language parameter
         self._setup_state()
         self.setup_ui()
         self.page.on_route_change = self.handle_route_change
@@ -107,7 +109,7 @@ class ClassificationUI:
                     ),
                     padding=10,
                 ),
-                ft.Column(
+                ft.Column(  # Make this Column scrollable instead of the Container
                     controls=[
                         self.category_message,
                         ft.Row(
@@ -147,6 +149,8 @@ class ClassificationUI:
                     ],
                     spacing=20,
                     horizontal_alignment=ft.CrossAxisAlignment.CENTER,
+                    scroll=ft.ScrollMode.AUTO,  # Add scroll here
+                    expand=True,  # Make sure it expands to take available space
                 ),
             ],
             expand=True,
@@ -174,8 +178,9 @@ class ClassificationUI:
 
     def update_category_dropdown(self):
         """Update category dropdown with user categories"""
+        # Get categories in the folder language
         categories = self.classification_service.get_categories(
-            self.page.preferred_language
+            self.classification_service.folder_language
         )
         self.category_dropdown.options = [ft.dropdown.Option(cat) for cat in categories]
         self.page.update()
@@ -354,6 +359,7 @@ class ClassificationUI:
         # Update category information
         if result["classification"]["labels"]:
             self.update_category_dropdown()
+            print("Category:", result["classification"]["labels"][0])
             self.category_dropdown.value = result["classification"]["labels"][0]
 
     def _show_detected_company(self, company_name: str):
@@ -404,3 +410,11 @@ class ClassificationUI:
 
         # Navigate to success page
         self.page.go("/success")
+
+    def update_language(self, new_language: str):
+        """Update UI language and refresh classification if needed"""
+        self.preferred_language = new_language
+        # No need to create new service instance as it handles folder language internally
+        if self.last_ocr_result:
+            threading.Thread(target=self.start_processing, daemon=True).start()
+        self.page.update()
