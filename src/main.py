@@ -9,8 +9,10 @@ from pages.google_drive_auth import GoogleDriveAuth
 from pages.upload_success import UploadSuccessUI
 from pages.drive_setup import DriveSetupUI
 from pages.search import SearchUI
+from pages.folder_explorer import FolderExplorerUI  # Add this import
 from services.drive_sync_service import DriveSyncService
 from services.overlay_service import OverlayService
+from services.search_service import SearchService  # Add this import at the top with other imports
 
 
 def create_app_structure(page: ft.Page, auth_handler: GoogleDriveAuth):
@@ -42,6 +44,8 @@ def create_app_structure(page: ft.Page, auth_handler: GoogleDriveAuth):
             page.go("/")
         elif e.control.selected_index == 1:
             page.go("/search")
+        elif e.control.selected_index == 2:
+            page.go("/files")
         page.update()
 
     # Create sync overlay
@@ -158,6 +162,11 @@ def create_app_structure(page: ft.Page, auth_handler: GoogleDriveAuth):
                 selected_icon=ft.Icons.SEARCH,
                 label="Search",
             ),
+            ft.NavigationBarDestination(
+                icon=ft.Icons.FOLDER_OUTLINED,
+                selected_icon=ft.Icons.FOLDER,
+                label="Files",
+            ),
         ],
         on_change=handle_nav_change,
         selected_index=0,
@@ -240,6 +249,9 @@ async def main(page: ft.Page):
         "image": ft.Ref[ft.Image](),
     }
 
+    # Initialize search service
+    page.search_service = SearchService()
+
     # Create pages after refs are initialized
     auth_handler = GoogleDriveAuth(page)
     setup_ui = DriveSetupUI(page)
@@ -250,6 +262,7 @@ async def main(page: ft.Page):
     classification_ui = ClassificationUI(page)
     success_ui = UploadSuccessUI(page)
     search_ui = SearchUI(page)
+    folder_explorer_ui = FolderExplorerUI(page)  # Add folder_explorer_ui to page initialization
 
     # Initialize overlay service
     page.overlay_service = OverlayService(page)
@@ -314,6 +327,10 @@ async def main(page: ft.Page):
             page.content_container.content = success_ui.view
         elif page.route == "/search":
             page.content_container.content = search_ui.view
+        elif page.route == "/files":
+            page.content_container.content = folder_explorer_ui.view
+            folder_explorer_ui.load_current_folder()  # Load contents when navigating to page
+            page.main_pagelet.navigation_bar.selected_index = 2
 
         # Update view with existing Pagelet and overlays
         page.views.append(

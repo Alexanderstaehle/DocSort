@@ -53,6 +53,7 @@ flet run
 - Offline Inference no extra API's (except Google Drive access)
 - Vector-based search functionality
 - Allow manual upload and sync search service
+- Folder explorer
 
 ### 🚧 In Development
 1. **Document Scanning**
@@ -61,7 +62,6 @@ flet run
 
 2. **Smart Organization**
     - Suggest new category if "Other" selected
-    - Folder explorer
 
 3. **Multi-platform support**
     - Build application on Android and iOS
@@ -69,4 +69,3 @@ flet run
 
 ### Known Issues
 - File upload on web returns None for file path (seems to be an issue with Flet)
-- Cleanup console outputs
