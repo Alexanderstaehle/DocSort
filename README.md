@@ -1,4 +1,6 @@
 # DocSort
+![Demo](DocSortDemo.gif)
+
 DocSort is a Flet-based application that streamlines document digitalization and organization. Key features:
 
 - Automatic document scanning with corner detection
